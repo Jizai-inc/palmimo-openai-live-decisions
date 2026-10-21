@@ -1,6 +1,6 @@
 # Third-party notices
 
-Palmimo Live Agent is Copyright 2026 Jizai Inc. and licensed under Apache-2.0.
+Palmimo OpenAI Live Decisions is Copyright 2026 Jizai Inc. and licensed under Apache-2.0.
 This repository does not vendor dependency source, model weights, audio, images,
 or native libraries. Python dependencies are installed separately; some models
 are downloaded on first use. Their licenses remain in force independently of

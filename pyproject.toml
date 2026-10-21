@@ -1,5 +1,5 @@
 [project]
-name = "palmimo-live-agent"
+name = "palmimo-openai-live-decisions"
 version = "0.1.0"
 description = "Full-duplex Palmimo companion with GPT-Live and native Decisions reactions"
 authors = [{ name = "Jizai Inc." }]
@@ -16,12 +16,12 @@ dependencies = [
 ]
 
 [project.scripts]
-palmimo-live-agent = "palmimo_live_agent.cli:main"
+palmimo-openai-live-decisions = "palmimo_openai_live_decisions.cli:main"
 
 [project.urls]
-Repository = "https://github.com/Jizai-inc/palmimo-live-agent"
-Issues = "https://github.com/Jizai-inc/palmimo-live-agent/issues"
-Documentation = "https://github.com/Jizai-inc/palmimo-live-agent#readme"
+Repository = "https://github.com/Jizai-inc/palmimo-openai-live-decisions"
+Issues = "https://github.com/Jizai-inc/palmimo-openai-live-decisions/issues"
+Documentation = "https://github.com/Jizai-inc/palmimo-openai-live-decisions#readme"
 
 [project.optional-dependencies]
 robot = [

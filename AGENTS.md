@@ -1,4 +1,4 @@
-# Palmimo Live agent
+# Palmimo OpenAI Live Decisions
 
 Use Python 3.12 and uv. Source comments, docstrings, and documentation are English;
 runtime conversation is Japanese. Keep robot algorithms in the pinned Palmimo SDK.

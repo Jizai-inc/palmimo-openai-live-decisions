@@ -10,13 +10,13 @@ import numpy as np
 import pytest
 from palmimo_sdk import Palmimo
 
-from palmimo_live_agent import vision
-from palmimo_live_agent.audio import NullPlayback
-from palmimo_live_agent.config import Settings
-from palmimo_live_agent.events import EventLog
-from palmimo_live_agent.robot import Robot
-from palmimo_live_agent.runtime import Session
-from palmimo_live_agent.vision import CameraFrames, SceneVision, VisionUnavailable
+from palmimo_openai_live_decisions import vision
+from palmimo_openai_live_decisions.audio import NullPlayback
+from palmimo_openai_live_decisions.config import Settings
+from palmimo_openai_live_decisions.events import EventLog
+from palmimo_openai_live_decisions.robot import Robot
+from palmimo_openai_live_decisions.runtime import Session
+from palmimo_openai_live_decisions.vision import CameraFrames, SceneVision, VisionUnavailable
 
 
 class Camera:

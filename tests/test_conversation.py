@@ -8,13 +8,13 @@ from typing import Any
 import pytest
 from palmimo_sdk import Palmimo
 
-from palmimo_live_agent.actions import ACTIONS, CONTINUOUS_ACTIONS
-from palmimo_live_agent.audio import NullPlayback
-from palmimo_live_agent.config import Settings, session_config
-from palmimo_live_agent.events import EventLog
-from palmimo_live_agent.policy import Conversation, Reaction, ReactionPolicy
-from palmimo_live_agent.robot import Robot
-from palmimo_live_agent.runtime import Session
+from palmimo_openai_live_decisions.actions import ACTIONS, CONTINUOUS_ACTIONS
+from palmimo_openai_live_decisions.audio import NullPlayback
+from palmimo_openai_live_decisions.config import Settings, session_config
+from palmimo_openai_live_decisions.events import EventLog
+from palmimo_openai_live_decisions.policy import Conversation, Reaction, ReactionPolicy
+from palmimo_openai_live_decisions.robot import Robot
+from palmimo_openai_live_decisions.runtime import Session
 
 
 def source(identity: str = "one", direction: str = "input") -> dict[str, Any]:

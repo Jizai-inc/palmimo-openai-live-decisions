@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 from palmimo_sdk import Palmimo
 
-from palmimo_live_agent import audio, runtime
-from palmimo_live_agent.config import Settings
-from palmimo_live_agent.events import EventLog
-from palmimo_live_agent.robot import Robot
+from palmimo_openai_live_decisions import audio, runtime
+from palmimo_openai_live_decisions.config import Settings
+from palmimo_openai_live_decisions.events import EventLog
+from palmimo_openai_live_decisions.robot import Robot
 
 
 class FakePlayer:

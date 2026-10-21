@@ -1,4 +1,4 @@
-# Palmimo Live Agent
+# Palmimo × OpenAI — GPT-Live + Decisions API
 
 A Japanese conversational reference app for [Palmimo DevKit](https://github.com/Jizai-inc/palmimo-devkit).
 GPT-Live listens and speaks concurrently, while the Decisions API selects
@@ -56,8 +56,8 @@ dependencies; see [third-party notices](THIRD_PARTY_NOTICES.md).
 Clone and install on the configured robot host:
 
 ```bash
-git clone https://github.com/Jizai-inc/palmimo-live-agent.git
-cd palmimo-live-agent
+git clone https://github.com/Jizai-inc/palmimo-openai-live-decisions.git
+cd palmimo-openai-live-decisions
 uv sync --frozen --extra robot
 cp .env.example .env
 chmod 600 .env
@@ -69,7 +69,7 @@ Never commit it, include it in an issue, or place it in a browser client.
 Check API access before opening any devices:
 
 ```bash
-uv run --frozen --extra robot palmimo-live-agent check-api --env-file .env
+uv run --frozen --extra robot palmimo-openai-live-decisions check-api --env-file .env
 ```
 
 This performs real, potentially billable API requests. It does not open the
@@ -78,7 +78,7 @@ microphone, speaker, camera, display, or servo bus.
 Stop every other Palmimo app. First test the microphone and speaker:
 
 ```bash
-uv run --frozen --extra robot palmimo-live-agent run --env-file .env \
+uv run --frozen --extra robot palmimo-openai-live-decisions run --env-file .env \
   --audio-only --seconds 60
 ```
 
@@ -89,7 +89,7 @@ Support the robot with its feet clear for initial tests and supervise it.
 Then run in an interactive terminal:
 
 ```bash
-uv run --frozen --extra robot palmimo-live-agent run --env-file .env
+uv run --frozen --extra robot palmimo-openai-live-decisions run --env-file .env
 ```
 
 If needed, select the serial device with `--port /dev/ttyACM0`. When controlling
@@ -121,7 +121,7 @@ continuous walking when their streams stall.
 
 ## Configuration
 
-Use `uv run palmimo-live-agent --help` for the complete CLI.
+Use `uv run palmimo-openai-live-decisions --help` for the complete CLI.
 
 | Option | Default / purpose |
 | --- | --- |

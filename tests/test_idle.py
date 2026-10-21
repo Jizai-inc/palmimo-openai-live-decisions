@@ -9,13 +9,13 @@ import httpx
 import pytest
 from palmimo_sdk import Palmimo
 
-from palmimo_live_agent import idle, runtime
-from palmimo_live_agent.audio import NullPlayback
-from palmimo_live_agent.config import Settings
-from palmimo_live_agent.events import EventLog
-from palmimo_live_agent.idle import IDLE_ACTIONS, IdleDecider
-from palmimo_live_agent.robot import Robot
-from palmimo_live_agent.runtime import InputControl, Session
+from palmimo_openai_live_decisions import idle, runtime
+from palmimo_openai_live_decisions.audio import NullPlayback
+from palmimo_openai_live_decisions.config import Settings
+from palmimo_openai_live_decisions.events import EventLog
+from palmimo_openai_live_decisions.idle import IDLE_ACTIONS, IdleDecider
+from palmimo_openai_live_decisions.robot import Robot
+from palmimo_openai_live_decisions.runtime import InputControl, Session
 
 
 async def discard(event: dict[str, Any]) -> None:
