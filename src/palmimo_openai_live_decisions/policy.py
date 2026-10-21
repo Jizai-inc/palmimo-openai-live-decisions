@@ -45,8 +45,9 @@ class Conversation:
         return [
             {
                 "role": "developer",
-                "content": "接続が復旧しました。以下は直前の会話の一部です。聞こえていなかった内容や"
-                "誰が話したかを推測しないでください。過去の動作を再実行しないでください。",
+                "content": "The connection has recovered. Below is part of the preceding conversation. "
+                "Continue its language and any explicit language preference. "
+                "Do not invent missed speech or speaker identities, and do not repeat past actions.",
             },
             *[dict(p) for p in self.parts],
         ]
@@ -104,7 +105,7 @@ class ReactionPolicy:
         participation = answers.get("participation")
         if participation == "yield" and not self.quiet:
             self.quiet = True
-            instruction = "いまは発言と相槌を控えて聞いてください。再び直接話しかけられたら応答してください。"
+            instruction = "Listen without speaking or backchannels until directly addressed again. Keep the conversation language."
         elif participation == "answer":
             self.quiet = False
         elif (
@@ -113,7 +114,10 @@ class ReactionPolicy:
             and self.clock() - self.last_contribution >= self.settings.contribution_cooldown
         ):
             self.last_contribution = self.clock()
-            instruction = "会話に参加できそうです。まだ人が話していれば待ち、区切りで役立つ意見があれば一言だけ。直前に答えていれば繰り返さないでください。"
+            instruction = (
+                "There may be a useful opening to contribute. Wait while people are speaking, then offer "
+                "one brief relevant thought in the conversation language if helpful. Do not repeat a recent answer."
+            )
         expression = answers.get("expression")
         if expression not in {"neutral", "happy", "sad", "thinking", "surprised"}:
             expression = None

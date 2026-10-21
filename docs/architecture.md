@@ -13,6 +13,14 @@ fragments with `gpt-6-luna`. The application rejects stale, duplicate,
 out-of-order, and low-confidence results, and limits gesture and contribution
 frequency independently.
 
+GPT-Live also chooses the conversation language from spoken context and explicit
+preferences. Action notices describe intent rather than supply a fixed spoken
+phrase. The voice model renders announcements, stop results, and visual facts in
+the conversation language; internal notices do not select a language. This adds
+no language-detection round trip or language-specific TTS service. Reconnect
+history retains the recent multilingual turns and any preference still in that
+bounded context, rather than resetting speech to a fixed language.
+
 Explicit motion requests use native Decisions delegation. A separate Decisions
 loop chooses silent idle gestures from recent conversation, a recent scene
 description, and movement history. It does not wait for a silence threshold.

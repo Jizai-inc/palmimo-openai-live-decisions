@@ -59,7 +59,7 @@ async def test_stop_returns_legs_and_neck_to_neutral_before_acknowledgment(motio
     acknowledgments: list[dict[str, int]] = []
 
     async def send(event: dict[str, Any]) -> None:
-        if "停止しました" in event.get("content", ""):
+        if "Motion stopped" in event.get("content", ""):
             acknowledgments.append(robot.palmimo.positions)
 
     async def move() -> None:
@@ -96,7 +96,8 @@ async def test_stop_returns_legs_and_neck_to_neutral_before_acknowledgment(motio
     await session.settle()
 
 
-async def test_spoken_stop_interrupts_walking_while_output_audio_continues() -> None:
+@pytest.mark.parametrize("fragments", [("止ま", "って"), ("Please st", "op")])
+async def test_spoken_stop_interrupts_walking_while_output_audio_continues(fragments: tuple[str, str]) -> None:
     robot = Robot(Palmimo())
     session = Session(Settings(), robot, EventLog())
     sent: list[dict[str, Any]] = []
@@ -116,13 +117,13 @@ async def test_spoken_stop_interrupts_walking_while_output_audio_continues() -> 
     session.schedule(walk)
     await asyncio.wait_for(started.wait(), 3)
     player = NullPlayback()
-    for fragment in ("止ま", "って"):
+    for fragment in fragments:
         await session.dispatch({"type": "session.input_transcript.delta", "delta": fragment}, player)
     await session.dispatch({"type": "session.output_audio.delta", "delta": "AAA="}, player)
     assert player.bytes == 2
     assert session.motion is not None
     await asyncio.wait_for(session.motion, 3)
-    assert not robot.walking and "停止しました" in sent[-1]["content"]
+    assert not robot.walking and "Motion stopped" in sent[-1]["content"]
     await session.settle()
 
 

@@ -87,7 +87,7 @@ async def test_camera_failure_does_not_reuse_an_old_description() -> None:
 
     session.send = send
     await session.observe_scene("look")
-    assert "確認できません" in sent[-1]["content"] and "以前の観察" in sent[-1]["content"]
+    assert "could not be checked" in sent[-1]["content"] and "earlier observation" in sent[-1]["content"]
     assert sent[-1]["delegation_id"] == "look"
 
 
@@ -131,7 +131,7 @@ async def test_vision_wait_keeps_audio_and_stop_available_and_cancels_on_exit() 
     session.stop_motion("test_stop")
     assert session.motion is not None
     await asyncio.wait_for(session.motion, 1)
-    assert player.bytes == 2 and "停止しました" in sent[-1]["content"]
+    assert player.bytes == 2 and "Motion stopped" in sent[-1]["content"]
     await session.settle()
     assert cancelled.is_set() and session.visual_task is None
 

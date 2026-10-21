@@ -13,7 +13,7 @@ from typing import Any
 
 import websockets
 
-from .actions import ACTION_PHRASES, ACTIONS, CONTINUOUS_ACTIONS
+from .actions import ACTION_DESCRIPTIONS, ACTIONS, CONTINUOUS_ACTIONS
 from .audio import NullPlayback, Playback, microphone_frames
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
@@ -134,7 +134,8 @@ class Session:
                 {
                     "type": "session.commentary.append",
                     "delegation_id": None,
-                    "content": result + "新しい動作依頼か『自由に動いて』で再開します。",
+                    "content": result + " A new motion request or permission to move freely resumes movement. "
+                    "Confirm briefly in the current conversation language.",
                 }
             )
 
@@ -157,8 +158,10 @@ class Session:
                 {
                     "type": "session.commentary.append",
                     "delegation_id": delegation,
-                    "content": f"動作開始の前置き:「{ACTION_PHRASES[action]}」。まだ実行前です。"
-                    "この一言を先に発声してください。発声に合わせて身体が動きます。",
+                    "content": f"Action announcement: {ACTION_DESCRIPTIONS[action]}. The action has not started yet. "
+                    "Say a brief, natural acknowledgment in the current conversation language now. "
+                    "Convey the intent; do not read this English notice verbatim or switch language because of it. "
+                    "The body will start with your speech.",
                 }
             )
             try:
@@ -169,7 +172,7 @@ class Session:
                     {
                         "type": "session.thinking.append",
                         "delegation_id": delegation,
-                        "content": "前置きの発声を確認できなかったため動作は実行していません。実行済みとは言わないでください。",
+                        "content": "The action was not executed because voice onset was not confirmed. Do not claim execution.",
                     }
                 )
                 return False
@@ -226,16 +229,19 @@ class Session:
             description, age = await self.vision.describe(question)
             self.scene = description
             self.scene_time = time.monotonic() - age
-            content = f"最新の視覚観察（取得から{age:.1f}秒）: {description}"
+            content = f"Visual observation (captured {age:.1f} seconds ago): {description}"
             self.log.write("vision_observed", requested=delegation is not None, age_seconds=round(age, 2))
         except Exception as exc:
             self.scene = ""
             content = (
-                "最新の視覚観察: 現在の画像を確認できませんでした。以前の観察を現在の様子として答えないでください。"
+                "Visual observation: the current image could not be checked. "
+                "Do not describe an earlier observation as the current scene."
             )
             self.log.write("vision_unavailable", error=type(exc).__name__)
-        if delegation is None:
-            content += "\n背景の参考情報です。この更新だけを理由に発言や身体動作を始めないでください。"
+        if delegation is not None:
+            content += "\nAnswer naturally in the current conversation language, not the observation's language."
+        else:
+            content += "\nBackground context only; do not speak or move solely because of this update."
         await self.send(
             {
                 "type": "session.commentary.append" if delegation else "session.thinking.append",
@@ -316,16 +322,16 @@ class Session:
                     self.log.write("reaction_completed", expression=reaction.expression, gesture=reaction.gesture)
                     if reaction.gesture and not self.settings.audio_only:
                         description = {
-                            "nod": "短くうなずきました",
-                            "shake": "短く首を横に振りました",
-                            "clap": "拍手しました",
+                            "nod": "nodded briefly",
+                            "shake": "shook the head briefly",
+                            "clap": "clapped",
                         }[reaction.gesture]
                         await self.send(
                             {
                                 "type": "session.thinking.append",
                                 "delegation_id": None,
-                                "content": f"身体の実行結果: 自発的に{description}。これは会話中の仕草です。"
-                                "この通知だけを理由に発話したり、新しい動作を依頼したりしないでください。",
+                                "content": f"Motion result: spontaneously {description}. This was a conversational gesture. "
+                                "Do not speak or request another action solely because of this notice.",
                             }
                         )
 
@@ -382,7 +388,7 @@ class Session:
                 {
                     "type": "session.commentary.append",
                     "delegation_id": delegation,
-                    "content": "自発的な仕草を再開しました。",
+                    "content": "Autonomous gestures have resumed. Confirm briefly in the current conversation language.",
                 }
             )
             return
@@ -394,7 +400,7 @@ class Session:
                     {
                         "type": "session.thinking.append",
                         "delegation_id": delegation,
-                        "content": "最新の視覚観察を取得中です。先行する結果を待ってください。",
+                        "content": "A fresh visual observation is in progress. Wait for that result.",
                     }
                 )
             return
@@ -405,7 +411,7 @@ class Session:
                 {
                     "type": "session.thinking.append",
                     "delegation_id": delegation,
-                    "content": "歩行を開始しました。『止まって』と言われるまで続けています。まだ完了していません。開始宣言を繰り返す必要はありません。",
+                    "content": "Walking has started and continues until stopped. It is not complete. Do not repeat the start announcement.",
                 }
             )
 
@@ -426,9 +432,9 @@ class Session:
                 {
                     "type": "session.commentary.append" if action == "stop" else "session.thinking.append",
                     "delegation_id": delegation,
-                    "content": result
+                    "content": result + " Confirm briefly in the current conversation language."
                     if action == "stop"
-                    else f"実行結果: {result}。この完了通知だけを理由に開始宣言を繰り返さないでください。",
+                    else f"Execution result: {result}. Do not repeat a start announcement because of this completion notice.",
                 }
             )
 
@@ -437,7 +443,7 @@ class Session:
                 {
                     "type": "session.thinking.append",
                     "delegation_id": delegation,
-                    "content": "実行する動作はありません。会話を続けてください。",
+                    "content": "There is no action to execute. Continue the conversation in the person's language.",
                 }
             )
         else:
@@ -690,7 +696,7 @@ async def run(
                 control.motion_paused = True
                 conversation.append(
                     "developer",
-                    "通信が中断したため身体動作は停止しました。新しい実行依頼があるまで再開しないでください。",
+                    "Motion was stopped after a connection interruption. Do not resume without a new request.",
                 )
                 failures = 1 if time.monotonic() - started > 30 else failures + 1
                 log.write("connection_lost", error=type(exc).__name__, attempt=failures)
