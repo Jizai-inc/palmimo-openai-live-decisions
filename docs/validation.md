@@ -18,8 +18,9 @@ API call or a simulated test.
    return to the startup stance and remain held. Also verify local `x`.
 6. Say the idle-resume phrase or make a new motion request. Check that autonomous
    motion resumes and does not audibly disrupt conversation.
-7. Wave silently, ask about a visible object, replace the object and ask again,
-   then request applause. Assess actual behavior rather than event counts alone.
+7. Wave silently and confirm that Palmimo waves back without announcing the
+   gesture. Ask about a visible object, replace the object and ask again, then
+   request applause. Assess actual behavior rather than event counts alone.
 8. Under supervision with the local stop available, test connection loss. Check
    that motion holds and an old command is not replayed on reconnection.
 9. End with `q`, wait for `stopped`, and independently verify device release,

@@ -151,7 +151,7 @@ async def test_wave_is_discarded_while_an_explicit_motion_is_active() -> None:
     await session.settle()
 
 
-async def test_wave_back_uses_safe_sdk_motion_and_reports_completion() -> None:
+async def test_wave_back_uses_safe_sdk_motion_without_notifying_voice() -> None:
     positions: list[dict[str, int]] = []
     robot = Robot(Palmimo(on_step=positions.append))
     session = Session(Settings(), robot, EventLog())
@@ -166,7 +166,7 @@ async def test_wave_back_uses_safe_sdk_motion_and_reports_completion() -> None:
     assert session.motion is not None and not sent
     await asyncio.wait_for(session.motion, 6)
     assert positions and all(200 <= value <= 3900 for frame in positions for value in frame.values())
-    assert "振り返しました" in sent[-1]["content"]
+    assert not sent
     await session.settle()
 
 

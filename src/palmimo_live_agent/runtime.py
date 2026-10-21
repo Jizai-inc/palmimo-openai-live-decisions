@@ -201,7 +201,7 @@ class Session:
                 self.motion = None
 
     def check_wave(self) -> None:
-        """Schedule a fresh local wave reflex without preempting explicit motion."""
+        """Schedule a silent local wave reflex without preempting explicit motion."""
         if not self.robot.take_wave() or self.policy.quiet or self.control.muted or self.control.motion_paused:
             return
         self.log.write("wave_detected")
@@ -209,14 +209,6 @@ class Session:
         async def wave() -> None:
             await self.robot.wave_back()
             self.log.write("wave_completed")
-            await self.send(
-                {
-                    "type": "session.thinking.append",
-                    "delegation_id": None,
-                    "content": "視覚反応の実行結果: 目の前で手を振る人を検出し、笑顔で両手を振り返しました。"
-                    "この通知だけを理由に動作を再実行しないでください。",
-                }
-            )
 
         if not self.schedule(wave):
             self.log.write("wave_skipped", reason="motion_busy")

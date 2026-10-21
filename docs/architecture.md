@@ -48,6 +48,8 @@ detection. A fresh camera frame is interpreted by a stateless Responses request
 using `gpt-6-luna`. GPT-Live receives concise text from that request. Frames are
 limited to a 768-pixel maximum width, never saved by this app, and rejected when
 frozen or stale. Local wave detection does not need a cloud image request.
+Automatic wave-back stays silent: completion is recorded in the local event log
+without sending a completion notification to the voice model.
 
 ## Recovery and boundaries
 
