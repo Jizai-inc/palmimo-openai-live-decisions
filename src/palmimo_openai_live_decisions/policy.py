@@ -1,0 +1,140 @@
+"""Reject stale decisions and keep reactions from competing with conversation."""
+
+import time
+from collections import OrderedDict, deque
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from .config import Settings
+
+
+@dataclass(frozen=True)
+class Reaction:
+    """A small application-owned action, never raw servo instructions."""
+
+    expression: str | None = None
+    gesture: str | None = None
+    instruction: str | None = None
+
+
+class Conversation:
+    """Keep a bounded transcript in memory for reconnect context."""
+
+    def __init__(self, limit: int = 12000) -> None:
+        self.parts: deque[dict[str, str]] = deque()
+        self.limit = limit
+
+    def append(self, role: str, text: str) -> None:
+        """Preserve fragments exactly, without inventing speaker identities."""
+        if self.parts and self.parts[-1]["role"] == role:
+            self.parts[-1]["content"] += text
+        else:
+            self.parts.append({"role": role, "content": text})
+        while sum(len(p["content"]) for p in self.parts) > self.limit:
+            excess = sum(len(p["content"]) for p in self.parts) - self.limit
+            if len(self.parts[0]["content"]) <= excess:
+                self.parts.popleft()
+            else:
+                self.parts[0]["content"] = self.parts[0]["content"][excess:]
+
+    def history(self) -> list[dict[str, str]]:
+        """Return detached history, including an explicit continuity caveat."""
+        if not self.parts:
+            return []
+        return [
+            {
+                "role": "developer",
+                "content": "接続が復旧しました。以下は直前の会話の一部です。聞こえていなかった内容や"
+                "誰が話したかを推測しないでください。過去の動作を再実行しないでください。",
+            },
+            *[dict(p) for p in self.parts],
+        ]
+
+
+class ReactionPolicy:
+    """Own per-session ordering, expiry, confidence, and reaction frequency."""
+
+    def __init__(self, settings: Settings, clock: Callable[[], float] = time.monotonic) -> None:
+        self.settings = settings
+        self.clock = clock
+        self.sources: OrderedDict[str, tuple[str, int, float]] = OrderedDict()
+        self.applied: dict[str, int] = {}
+        self.sequence = 0
+        self.last_gesture = float("-inf")
+        self.last_clap = float("-inf")
+        self.last_contribution = float("-inf")
+        self.last_expression: str | None = None
+        self.quiet = False
+
+    def observe(self, event: dict[str, Any]) -> None:
+        """Remember source events so late results cannot move the robot."""
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str):
+            return
+        self.sequence += 1
+        self.sources[event_id] = (event["type"], self.sequence, self.clock())
+        while len(self.sources) > 256:
+            self.sources.popitem(last=False)
+
+    def evaluate(self, event: dict[str, Any]) -> Reaction | None:
+        """Convert a fresh trigger result to at most one reaction."""
+        source = self.sources.get(event.get("source_event_id", ""))
+        if source is None or event.get("delegation_id") is not None:
+            return None
+        direction, sequence, observed = source
+        if direction != event.get("source_event_type"):
+            return None
+        if self.clock() - observed > self.settings.decision_ttl:
+            return None
+        if sequence <= self.applied.get(direction, -1):
+            return None
+        inner = event.get("event", {})
+        if inner.get("type") != "decision.completed":
+            return None
+        self.applied[direction] = sequence
+        answers = {
+            answer.get("name"): answer.get("choice")
+            for answer in inner.get("decision", {}).get("answers", [])
+            if answer.get("type") == "choice"
+            and isinstance(answer.get("confidence"), (int, float))
+            and answer["confidence"] >= self.settings.confidence
+        }
+        instruction = None
+        participation = answers.get("participation")
+        if participation == "yield" and not self.quiet:
+            self.quiet = True
+            instruction = "いまは発言と相槌を控えて聞いてください。再び直接話しかけられたら応答してください。"
+        elif participation == "answer":
+            self.quiet = False
+        elif (
+            participation == "contribute"
+            and not self.quiet
+            and self.clock() - self.last_contribution >= self.settings.contribution_cooldown
+        ):
+            self.last_contribution = self.clock()
+            instruction = "会話に参加できそうです。まだ人が話していれば待ち、区切りで役立つ意見があれば一言だけ。直前に答えていれば繰り返さないでください。"
+        expression = answers.get("expression")
+        if expression not in {"neutral", "happy", "sad", "thinking", "surprised"}:
+            expression = None
+        if expression == self.last_expression:
+            expression = None
+        gesture = answers.get("gesture")
+        if (
+            gesture not in {"nod", "shake", "clap"}
+            or self.quiet
+            or self.clock() - self.last_gesture < self.settings.gesture_cooldown
+        ):
+            gesture = None
+        if gesture == "clap" and self.clock() - self.last_clap < self.settings.clap_cooldown:
+            gesture = None
+        return Reaction(expression, gesture, instruction)
+
+    def applied_motion(self, reaction: Reaction) -> None:
+        """Consume cooldown only after an action is accepted by the scheduler."""
+        if reaction.gesture:
+            self.last_gesture = self.clock()
+        if reaction.gesture == "clap":
+            self.last_clap = self.clock()
+        if reaction.expression:
+            self.last_expression = reaction.expression
