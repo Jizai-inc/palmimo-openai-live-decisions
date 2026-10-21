@@ -141,19 +141,23 @@ class Session:
 
         self.replace_motion(stopped)
 
+    async def steer(self, content: str) -> None:
+        """Append conversation steering to the Live session instructions."""
+        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": content})
+
     async def lift_quiet(self, release: str | None, reason: str) -> None:
         """Tell the voice model that quiet listening ended; the local flag alone cannot."""
         if release is None:
             return
         self.log.write("quiet_released", reason=reason)
-        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": release})
+        await self.steer(release)
 
     async def restore_quiet(self) -> None:
         """Re-establish quiet listening on a new connection, which starts without appended instructions."""
         if not self.policy.quiet:
             return
         self.log.write("quiet_restored")
-        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RESTORED})
+        await self.steer(QUIET_RESTORED)
 
     def check_streams(self) -> None:
         """Stop when capture fails, or walking loses its remote voice control path."""
@@ -326,9 +330,7 @@ class Session:
                         steering=bool(reaction.instruction),
                     )
                 if reaction.instruction:
-                    await self.send(
-                        {"type": "session.instructions.append", "delegation_id": None, "content": reaction.instruction}
-                    )
+                    await self.steer(reaction.instruction)
 
                 async def react() -> None:
                     await self.robot.react(reaction)

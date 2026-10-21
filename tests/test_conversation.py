@@ -163,6 +163,21 @@ async def test_every_quiet_exit_appends_a_release_instruction() -> None:
     await session.settle()
 
 
+async def test_answer_decision_while_quiet_sends_the_release() -> None:
+    session = Session(Settings(), FakeRobot(), EventLog())  # type: ignore[arg-type]
+    sent: list[dict[str, Any]] = []
+
+    async def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+
+    session.send = send
+    session.policy.quiet = True
+    await session.dispatch(source("asked"), NullPlayback())
+    await session.dispatch(result("asked", participation="answer"), NullPlayback())
+    assert not session.policy.quiet
+    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RELEASE}]
+
+
 async def test_reconnect_restores_quiet_listening_only_when_quiet() -> None:
     policy = ReactionPolicy(Settings())
     sent: list[dict[str, Any]] = []
