@@ -159,7 +159,8 @@ class Session:
                     "type": "session.commentary.append",
                     "delegation_id": delegation,
                     "content": f"Action announcement: {ACTION_DESCRIPTIONS[action]}. The action has not started yet. "
-                    "Say a brief, natural acknowledgment in the current conversation language now. "
+                    "Say a brief, natural acknowledgment in the language of the latest spoken request now, "
+                    "even if this short request changed language. Honor an explicit language preference if present. "
                     "Convey the intent; do not read this English notice verbatim or switch language because of it. "
                     "The body will start with your speech.",
                 }
