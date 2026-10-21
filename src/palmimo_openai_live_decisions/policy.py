@@ -98,9 +98,13 @@ class ReactionPolicy:
 
     def heard(self, text: str) -> str | None:
         """Treat the robot's name, heard after the quiet request itself, as being addressed."""
-        if not self.quiet or self.clock() - self.quiet_since < self.settings.quiet_name_grace:
+        if not self.quiet:
             return None
         heard = self.quiet_heard + text
+        if self.clock() - self.quiet_since < self.settings.quiet_name_grace:
+            # Keep only a name head that a fragment boundary could split, never a whole name.
+            self.quiet_heard = heard[-4:]
+            return None
         self.quiet_heard = heard[-32:]
         if not NAME_PATTERN.search(heard):
             return None

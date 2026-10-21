@@ -137,6 +137,26 @@ def test_name_releases_quiet_only_after_the_request_itself() -> None:
     assert policy.heard(long_question) == NAME_RELEASE and not policy.quiet
 
 
+def test_name_split_across_the_grace_boundary_still_releases() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    quiet_step(policy, "one", "yield")
+    assert policy.heard("静かに聞いててね、パルミーモ") is None
+    now[0] = 4.9
+    assert policy.heard("ねえパル") is None and policy.quiet
+    now[0] = 5.1
+    assert policy.heard("ミーモ、聞こえる？") == NAME_RELEASE and not policy.quiet
+
+
+def test_name_at_the_end_of_the_quiet_request_does_not_release_later() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    quiet_step(policy, "one", "yield")
+    assert policy.heard("しばらく静かに聞いててね、パルミーモ") is None
+    now[0] = 30
+    assert policy.heard("じゃあ次のスライドに行きます") is None and policy.quiet
+
+
 async def test_every_quiet_exit_appends_a_release_instruction() -> None:
     session = Session(Settings(), FakeRobot(), EventLog())  # type: ignore[arg-type]
     sent: list[dict[str, Any]] = []
