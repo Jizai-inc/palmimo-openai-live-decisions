@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import random
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
@@ -16,7 +17,7 @@ from .actions import ACTION_PHRASES, ACTIONS, CONTINUOUS_ACTIONS
 from .audio import NullPlayback, Playback, microphone_frames
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
-from .idle import IdleDecider
+from .idle import IDLE_PAUSE_SECONDS, IdleDecider
 from .policy import Conversation, ReactionPolicy
 from .robot import Robot
 from .vision import SceneVision
@@ -69,6 +70,7 @@ class Session:
         self.visual_task: asyncio.Task[None] | None = None
         self.idle = idle
         self.idle_request: asyncio.Task[str | None] | None = None
+        self.next_idle_at = 0.0
         self.motion_origin = "reaction"
         self.motion_epoch = 0
         self.scene = ""
@@ -464,10 +466,11 @@ class Session:
             and not self.control.muted
             and not self.policy.quiet
             and self.motion is None
+            and time.monotonic() >= self.next_idle_at
         )
 
     async def idle_loop(self) -> None:
-        """Select the next gesture as soon as the previous motion settles."""
+        """Leave a short pause between gestures without delaying speech or requests."""
         assert self.idle is not None
         while True:
             if not self.idle_available():
@@ -502,8 +505,11 @@ class Session:
                 assert self.idle is not None
                 self.idle.history.append(name)
                 self.log.write("idle_started", action=name, decision_ms=round((time.monotonic() - started) * 1000))
-                await self.robot.idle(name)
-                self.log.write("idle_completed", action=name)
+                try:
+                    await self.robot.idle(name)
+                    self.log.write("idle_completed", action=name)
+                finally:
+                    self.next_idle_at = time.monotonic() + random.uniform(*IDLE_PAUSE_SECONDS)
 
             self.schedule(perform, origin="idle")
 

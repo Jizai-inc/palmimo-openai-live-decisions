@@ -14,7 +14,8 @@ a general-purpose desktop voice assistant or an unattended robot controller.
   a shared conversation without treating every human utterance as a stop command.
 - Coordinate speech with SDK motions: announce requested actions before moving,
   dance for four seconds, and keep walking until explicitly stopped.
-- Move quietly while listening: gaze, expressions, nods, tilts, and stretches.
+- Move quietly while listening, with two-to-four-second pauses between idle
+  gestures: mostly gaze, expressions, and nods, with occasional tilts and stretches.
 - Wave back at a detected hand wave, answer questions about the current camera
   view, and occasionally clap when the conversation calls for it.
 - Prioritize stop requests, reject stale decisions, and settle and park on exit.

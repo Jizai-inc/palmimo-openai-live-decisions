@@ -16,7 +16,10 @@ frequency independently.
 Explicit motion requests use native Decisions delegation. A separate Decisions
 loop chooses silent idle gestures from recent conversation, a recent scene
 description, and movement history. It does not wait for a silence threshold.
-Idle actions alternate families, include a body gesture regularly, and never
+After each idle action settles, a random two-to-four-second pause gives the robot
+time to observe. Speech, reactions, and explicit requests bypass this idle-only
+pause. Idle actions alternate families, with a body gesture every four to six
+idle actions and smaller gaze, neck, or expression changes in between. They never
 select continuous walking or generate speech notifications.
 
 ## Motion and stopping

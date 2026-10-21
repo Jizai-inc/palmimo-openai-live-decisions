@@ -2,13 +2,14 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 from palmimo_sdk import Palmimo
 
-from palmimo_live_agent import idle
+from palmimo_live_agent import idle, runtime
 from palmimo_live_agent.audio import NullPlayback
 from palmimo_live_agent.config import Settings
 from palmimo_live_agent.events import EventLog
@@ -23,10 +24,25 @@ async def discard(event: dict[str, Any]) -> None:
 
 def test_idle_options_cannot_get_stuck_in_a_gaze_and_expression_cycle() -> None:
     decider = IdleDecider("test")
-    decider.history.extend(["tilt", "attend", "curious"])
+    decider.history.extend(["tilt", "attend", "curious", "look_left", "smile", "nod"])
     offered = decider.options(True)
     assert offered and all(IDLE_ACTIONS[name].family == "body" for name in offered)
     assert "tilt" not in offered
+
+
+@pytest.mark.parametrize("history", [["tilt"], ["tilt", "attend", "curious"]])
+def test_idle_body_motion_leaves_room_for_smaller_gestures(history: list[str]) -> None:
+    decider = IdleDecider("test")
+    decider.history.extend(history)
+    offered = decider.options(True)
+    assert offered and all(IDLE_ACTIONS[name].family != "body" for name in offered)
+
+
+def test_idle_body_motion_becomes_optional_after_three_smaller_gestures() -> None:
+    decider = IdleDecider("test")
+    decider.history.extend(["tilt", "attend", "curious", "look_left"])
+    families = {IDLE_ACTIONS[name].family for name in decider.options(False)}
+    assert "body" in families and "display" in families
 
 
 def delegation(action: str) -> dict[str, Any]:
@@ -149,6 +165,59 @@ async def test_idle_starts_during_speech_and_yields_to_reaction_without_voice_no
         assert session.schedule(react)
         await asyncio.wait_for(reacted.wait(), 1)
         assert cancelled.is_set() and list(decider.history) == ["tilt"]
+    finally:
+        loop.cancel()
+        await asyncio.gather(loop, return_exceptions=True)
+        await session.settle()
+
+
+async def test_idle_pause_preserves_audio_reactions_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 100.0
+    monkeypatch.setattr(runtime, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(runtime.random, "uniform", lambda low, high: 3.0)
+    completed, reacted = asyncio.Event(), asyncio.Event()
+    calls: list[str] = []
+    robot = Robot(Palmimo())
+    decider = IdleDecider("test")
+
+    async def choose(*args: Any) -> str:
+        return "curious"
+
+    async def move(name: str) -> None:
+        calls.append(name)
+        completed.set()
+
+    async def react() -> None:
+        reacted.set()
+
+    monkeypatch.setattr(decider, "choose", choose)
+    monkeypatch.setattr(robot, "idle", move)
+    session = Session(Settings(), robot, EventLog(), idle=decider)
+    session.send = discard
+    loop = asyncio.create_task(session.idle_loop())
+    try:
+        await asyncio.wait_for(completed.wait(), 1)
+        completed.clear()
+        assert not session.idle_available()
+        player = NullPlayback()
+        await session.dispatch({"type": "session.output_audio.delta", "delta": "AAA="}, player)
+        assert player.bytes == 2
+        assert session.schedule(react)
+        await asyncio.wait_for(reacted.wait(), 1)
+        now = 102.99
+        await asyncio.sleep(0.12)
+        assert len(calls) == 1
+        now = 103.0
+        await session.dispatch({"type": "session.input_transcript.delta", "delta": "話している途中"}, player)
+        await asyncio.wait_for(completed.wait(), 1)
+        assert len(calls) == 2
+        await session.dispatch({"type": "session.input_transcript.delta", "delta": "止まって"}, player)
+        assert session.control.motion_paused
+        assert session.motion is not None
+        await session.motion
+        now = 1000.0
+        assert not session.idle_available()
+        assert len(calls) == 2
     finally:
         loop.cancel()
         await asyncio.gather(loop, return_exceptions=True)
