@@ -1,5 +1,6 @@
 """Reject stale decisions and keep reactions from competing with conversation."""
 
+import re
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
@@ -7,6 +8,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
+
+QUIET_RELEASE = (
+    "Quiet listening has ended. Respond again when addressed and join with brief contributions as usual. "
+    "If you were just spoken to, answer now. Keep the conversation language."
+)
+# Speech recognition often bends the name (アルミモ, パルビーモ, カルビーモ); match those spellings too.
+NAME_PATTERN = re.compile(r"[パバアカ]ル[ミビ]ー?モ|パルミ|palmimo", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,24 @@ class ReactionPolicy:
         self.last_contribution = float("-inf")
         self.last_expression: str | None = None
         self.quiet = False
+        self.quiet_since = float("-inf")
+        self.released_at = float("-inf")
+        self.quiet_heard = ""
+
+    def release(self) -> str | None:
+        """Lift quiet listening and return the steering that tells the voice model so."""
+        if not self.quiet:
+            return None
+        self.quiet = False
+        self.released_at = self.clock()
+        return QUIET_RELEASE
+
+    def heard(self, text: str) -> str | None:
+        """Treat the robot's name, heard after the quiet request itself, as being addressed."""
+        if not self.quiet or self.clock() - self.quiet_since < self.settings.quiet_name_grace:
+            return None
+        self.quiet_heard = (self.quiet_heard + text)[-32:]
+        return self.release() if NAME_PATTERN.search(self.quiet_heard) else None
 
     def observe(self, event: dict[str, Any]) -> None:
         """Remember source events so late results cannot move the robot."""
@@ -102,6 +128,11 @@ class ReactionPolicy:
         }
         instruction = None
         participation = answers.get("participation")
+        was_quiet = self.quiet
+        release = self.release() if participation == "answer" else None
+        # Transcript context keeps an earlier quiet request visible; do not re-enter right after a release.
+        if participation == "yield" and self.clock() - self.released_at < self.settings.quiet_rearm_seconds:
+            participation = None
         if participation == "yield" and not self.quiet:
             self.quiet = True
             instruction = "いまは発言と相槌を控えて聞いてください。再び直接話しかけられたら応答してください。"
@@ -128,7 +159,10 @@ class ReactionPolicy:
             gesture = None
         if gesture == "clap" and self.clock() - self.last_clap < self.settings.clap_cooldown:
             gesture = None
-        return Reaction(expression, gesture, instruction)
+        if self.quiet and not was_quiet:
+            self.quiet_since = self.clock()
+            self.quiet_heard = ""
+        return Reaction(expression, gesture, instruction or release)
 
     def applied_motion(self, reaction: Reaction) -> None:
         """Consume cooldown only after an action is accepted by the scheduler."""

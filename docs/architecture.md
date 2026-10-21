@@ -22,6 +22,14 @@ pause. Idle actions alternate families, with a body gesture every four to six
 idle actions and smaller gaze, neck, or expression changes in between. They never
 select continuous walking or generate speech notifications.
 
+A `yield` decision enters quiet listening and appends a listen-only instruction
+to the Live session. Appended instructions are not withdrawn, so every exit
+from quiet listening appends an explicit release: an `answer` decision, a local
+match of the robot's name (including common speech recognition misspellings)
+at least five seconds after the quiet request, `resume_idle`, and the operator
+`i` command. A `yield` within 20 seconds of a release is ignored, because the
+original request remains in the transcript the Decisions trigger reads.
+
 ## Motion and stopping
 
 Explicit requests preempt spontaneous gestures through SDK cancellation. A

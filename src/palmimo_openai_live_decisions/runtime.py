@@ -140,6 +140,13 @@ class Session:
 
         self.replace_motion(stopped)
 
+    async def lift_quiet(self, release: str | None, reason: str) -> None:
+        """Tell the voice model that quiet listening ended; the local flag alone cannot."""
+        if release is None:
+            return
+        self.log.write("quiet_released", reason=reason)
+        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": release})
+
     def check_streams(self) -> None:
         """Stop when capture fails, or walking loses its remote voice control path."""
         now = time.monotonic()
@@ -271,6 +278,7 @@ class Session:
                 ):
                     self.input_tail = ""
                     self.stop_motion("spoken_stop")
+                await self.lift_quiet(self.policy.heard(event.get("delta", "")), "name_heard")
             self.log.write(
                 "transcript",
                 role=role,
@@ -295,10 +303,13 @@ class Session:
             if event.get("delegation_id"):
                 await self.delegated(event)
             else:
+                was_quiet = self.policy.quiet
                 reaction = self.policy.evaluate(event)
                 if reaction is None:
                     self.log.write("decision_ignored")
                     return
+                if self.policy.quiet != was_quiet:
+                    self.log.write("quiet_entered" if self.policy.quiet else "quiet_released", reason="decision")
                 if reaction.expression or reaction.gesture or reaction.instruction:
                     self.log.write(
                         "reaction",
@@ -375,9 +386,10 @@ class Session:
             self.input_tail = ""
         if action == "resume_idle":
             self.control.motion_paused = False
-            self.policy.quiet = False
+            release = self.policy.release()
             self.input_tail = ""
             self.log.write("idle_resumed")
+            await self.lift_quiet(release, "resume_idle")
             await self.send(
                 {
                     "type": "session.commentary.append",
@@ -608,9 +620,10 @@ async def run_connection(
                 )
             elif command == "i":
                 session.control.motion_paused = False
-                session.policy.quiet = False
+                release = session.policy.release()
                 session.input_tail = ""
                 session.log.write("idle_resumed", reason="operator")
+                await session.lift_quiet(release, "operator")
 
     async def scene_updates() -> None:
         while True:

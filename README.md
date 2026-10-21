@@ -58,7 +58,7 @@ Clone and install on the configured robot host:
 ```bash
 git clone https://github.com/Jizai-inc/palmimo-openai-live-decisions.git
 cd palmimo-openai-live-decisions
-uv sync --frozen --extra robot
+uv sync --frozen
 cp .env.example .env
 chmod 600 .env
 ```
@@ -69,7 +69,7 @@ Never commit it, include it in an issue, or place it in a browser client.
 Check API access before opening any devices:
 
 ```bash
-uv run --frozen --extra robot palmimo-openai-live-decisions check-api --env-file .env
+uv run --frozen palmimo-openai-live-decisions check-api --env-file .env
 ```
 
 This performs real, potentially billable API requests. It does not open the
@@ -78,7 +78,7 @@ microphone, speaker, camera, display, or servo bus.
 Stop every other Palmimo app. First test the microphone and speaker:
 
 ```bash
-uv run --frozen --extra robot palmimo-openai-live-decisions run --env-file .env \
+uv run --frozen palmimo-openai-live-decisions run --env-file .env \
   --audio-only --seconds 60
 ```
 
@@ -89,7 +89,7 @@ Support the robot with its feet clear for initial tests and supervise it.
 Then run in an interactive terminal:
 
 ```bash
-uv run --frozen --extra robot palmimo-openai-live-decisions run --env-file .env
+uv run --frozen palmimo-openai-live-decisions run --env-file .env
 ```
 
 If needed, select the serial device with `--port /dev/ttyACM0`. When controlling
@@ -100,6 +100,15 @@ Ctrl+C and SIGTERM also request graceful shutdown. Wait for `stopped` before
 disconnecting power or launching another app. Never use a forced process kill
 as the normal stop procedure. After a hardware session, verify device release
 and all 21 servos' torque-off state using the SDK diagnostics.
+
+### Install from Palmimo Portal
+
+The repository root ships a [`palmimo.toml`](palmimo.toml) manifest, so Palmimo
+Portal can add this repository as an app by its GitHub URL. Set `OPENAI_API_KEY`
+in the app's environment settings in Portal; Portal does not read `.env`.
+The `voice` and `no_idle` parameters map to `--voice` and `--no-idle`. A Portal
+start has no interactive terminal, so stop it from Portal rather than with `q`.
+The hardware checks above apply to the first Portal start as well.
 
 ## Stop and operator controls
 
@@ -118,6 +127,13 @@ A spoken stop is cloud-dependent and is not a physical emergency stop.
 Keep a local operator stop available. Connection loss holds motion; reconnecting
 does not replay an old action. Microphone and server-event watchdogs stop
 continuous walking when their streams stall.
+
+Asking Palmimo to be quiet or just listen puts it into quiet listening: no
+speech, backchannels, or gestures. It leaves quiet listening when it is directly
+addressed, when its name is heard a few seconds after the request, on
+`自由に動いて`, or on `i` + Enter, and each exit tells the voice model that
+it may speak again. A repeated quiet decision within 20 seconds of an exit is
+ignored, because the earlier request is still in the transcript context.
 
 ## Configuration
 
