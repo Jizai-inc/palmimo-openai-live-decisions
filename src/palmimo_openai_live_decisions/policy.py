@@ -13,6 +13,10 @@ QUIET_RELEASE = (
     "Quiet listening has ended. Respond again when addressed and join with brief contributions as usual. "
     "If you were just spoken to, answer now. Keep the conversation language."
 )
+QUIET_RESTORED = (
+    "The connection recovered during quiet listening. Keep listening without speech or backchannels "
+    "until directly addressed. Keep the conversation language."
+)
 # A name can be mentioned rather than addressed, so this release does not prompt an answer.
 NAME_RELEASE = (
     "Quiet listening has ended because your name was heard. If that was addressed to you, answer briefly; "

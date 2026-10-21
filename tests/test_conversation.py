@@ -15,6 +15,7 @@ from palmimo_openai_live_decisions.events import EventLog
 from palmimo_openai_live_decisions.policy import (
     NAME_RELEASE,
     QUIET_RELEASE,
+    QUIET_RESTORED,
     Conversation,
     Reaction,
     ReactionPolicy,
@@ -160,6 +161,21 @@ async def test_every_quiet_exit_appends_a_release_instruction() -> None:
     assert not session.policy.quiet
     assert sent[1]["type"] == "session.instructions.append" and sent[1]["content"] == QUIET_RELEASE
     await session.settle()
+
+
+async def test_reconnect_restores_quiet_listening_only_when_quiet() -> None:
+    policy = ReactionPolicy(Settings())
+    sent: list[dict[str, Any]] = []
+
+    async def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+
+    for quiet in (False, True):
+        policy.quiet = quiet
+        session = Session(Settings(), FakeRobot(), EventLog(), policy=policy)  # type: ignore[arg-type]
+        session.send = send
+        await session.restore_quiet()
+    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RESTORED}]
 
 
 def test_history_is_bounded_without_invented_speaker_labels() -> None:

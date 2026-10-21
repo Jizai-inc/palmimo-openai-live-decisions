@@ -62,7 +62,9 @@ without sending a completion notification to the voice model.
 ## Recovery and boundaries
 
 Recovery keeps at most the latest 12,000 transcript characters in memory and
-preserves the mute and motion-hold state. It does not replay actions or recreate
+preserves the mute and motion-hold state. The reaction policy also survives, and a
+new connection in quiet listening receives the listen-only instruction again,
+because appended instructions do not carry over. It does not replay actions or recreate
 the exact previous audio state. Repeated connection failures park and stop;
 configuration and device failures are fatal.
 

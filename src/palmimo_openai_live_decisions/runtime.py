@@ -18,7 +18,7 @@ from .audio import NullPlayback, Playback, microphone_frames
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
 from .idle import IDLE_PAUSE_SECONDS, IdleDecider
-from .policy import Conversation, ReactionPolicy
+from .policy import QUIET_RESTORED, Conversation, ReactionPolicy
 from .robot import Robot
 from .vision import SceneVision
 
@@ -47,12 +47,13 @@ class Session:
         control: InputControl | None = None,
         vision: SceneVision | None = None,
         idle: IdleDecider | None = None,
+        policy: ReactionPolicy | None = None,
     ) -> None:
         self.settings = settings
         self.robot = robot
         self.log = log
         self.conversation = conversation if conversation is not None else Conversation()
-        self.policy = ReactionPolicy(settings)
+        self.policy = policy if policy is not None else ReactionPolicy(settings)
         self.motion: asyncio.Task[None] | None = None
         self.seen_delegations: deque[str] = deque(maxlen=256)
         self.events = 0
@@ -146,6 +147,13 @@ class Session:
             return
         self.log.write("quiet_released", reason=reason)
         await self.send({"type": "session.instructions.append", "delegation_id": None, "content": release})
+
+    async def restore_quiet(self) -> None:
+        """Re-establish quiet listening on a new connection, which starts without appended instructions."""
+        if not self.policy.quiet:
+            return
+        self.log.write("quiet_restored")
+        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RESTORED})
 
     def check_streams(self) -> None:
         """Stop when capture fails, or walking loses its remote voice control path."""
@@ -559,6 +567,7 @@ async def run_connection(
     session.last_server_event = time.monotonic()
     if session.control.muted:
         await send({"type": "session.input_audio.mute"})
+    await session.restore_quiet()
 
     async def receive() -> None:
         async for raw in ws:
@@ -652,6 +661,7 @@ async def run(
 ) -> None:
     """Run until stopped, recovering boundedly from network failures only."""
     conversation = Conversation()
+    policy = ReactionPolicy(settings)
     control = InputControl()
     failures = 0
     deadline = time.monotonic() + settings.seconds if settings.seconds else float("inf")
@@ -662,7 +672,7 @@ async def run(
     try:
         while not stop.is_set() and time.monotonic() < deadline:
             player: Playback | None = None
-            session = Session(settings, robot, log, conversation, control, vision, idle)
+            session = Session(settings, robot, log, conversation, control, vision, idle, policy)
             started = time.monotonic()
             try:
                 async with websockets.connect(
