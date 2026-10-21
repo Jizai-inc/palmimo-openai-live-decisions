@@ -12,7 +12,13 @@ from palmimo_openai_live_decisions.actions import ACTIONS, CONTINUOUS_ACTIONS
 from palmimo_openai_live_decisions.audio import NullPlayback
 from palmimo_openai_live_decisions.config import Settings, session_config
 from palmimo_openai_live_decisions.events import EventLog
-from palmimo_openai_live_decisions.policy import QUIET_RELEASE, Conversation, Reaction, ReactionPolicy
+from palmimo_openai_live_decisions.policy import (
+    NAME_RELEASE,
+    QUIET_RELEASE,
+    Conversation,
+    Reaction,
+    ReactionPolicy,
+)
 from palmimo_openai_live_decisions.robot import Robot
 from palmimo_openai_live_decisions.runtime import Session
 
@@ -121,7 +127,13 @@ def test_name_releases_quiet_only_after_the_request_itself() -> None:
     assert policy.heard("パルミーモ、静かに聞いてて") is None and policy.quiet
     now[0] = 30
     assert policy.heard("ちょっと資料を開きます") is None and policy.quiet
-    assert policy.heard("アルビーモさん、今声出せる？") == QUIET_RELEASE and not policy.quiet
+    assert policy.heard("アルビーモさん、今声出せる？") == NAME_RELEASE and not policy.quiet
+    now[0] = 60
+    quiet_step(policy, "two", "yield")
+    assert policy.quiet
+    now[0] = 100
+    long_question = "パルミーモ、" + "さっきのスライドの三つ目の案について家族向けにどう思うか教えてくれる？" * 2
+    assert policy.heard(long_question) == NAME_RELEASE and not policy.quiet
 
 
 async def test_every_quiet_exit_appends_a_release_instruction() -> None:
@@ -137,7 +149,7 @@ async def test_every_quiet_exit_appends_a_release_instruction() -> None:
         {"type": "session.input_transcript.delta", "event_id": "name", "delta": "パルミーモ、喋れる？"}, NullPlayback()
     )
     assert not session.policy.quiet
-    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RELEASE}]
+    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": NAME_RELEASE}]
     session.policy.quiet = True
     await session.dispatch(
         {"type": "session.input_transcript.delta", "event_id": "idle", "delta": "自由に動いて"}, NullPlayback()

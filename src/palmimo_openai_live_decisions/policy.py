@@ -13,6 +13,11 @@ QUIET_RELEASE = (
     "Quiet listening has ended. Respond again when addressed and join with brief contributions as usual. "
     "If you were just spoken to, answer now. Keep the conversation language."
 )
+# A name can be mentioned rather than addressed, so this release does not prompt an answer.
+NAME_RELEASE = (
+    "Quiet listening has ended because your name was heard. If that was addressed to you, answer briefly; "
+    "if people were only talking about you, keep listening until addressed. Keep the conversation language."
+)
 # Speech recognition often bends the name (アルミモ, パルビーモ, カルビーモ); match those spellings too.
 NAME_PATTERN = re.compile(r"[パバアカ]ル[ミビ]ー?モ|パルミ|palmimo", re.IGNORECASE)
 
@@ -84,14 +89,19 @@ class ReactionPolicy:
             return None
         self.quiet = False
         self.released_at = self.clock()
+        self.quiet_heard = ""
         return QUIET_RELEASE
 
     def heard(self, text: str) -> str | None:
         """Treat the robot's name, heard after the quiet request itself, as being addressed."""
         if not self.quiet or self.clock() - self.quiet_since < self.settings.quiet_name_grace:
             return None
-        self.quiet_heard = (self.quiet_heard + text)[-32:]
-        return self.release() if NAME_PATTERN.search(self.quiet_heard) else None
+        heard = self.quiet_heard + text
+        self.quiet_heard = heard[-32:]
+        if not NAME_PATTERN.search(heard):
+            return None
+        self.release()
+        return NAME_RELEASE
 
     def observe(self, event: dict[str, Any]) -> None:
         """Remember source events so late results cannot move the robot."""
