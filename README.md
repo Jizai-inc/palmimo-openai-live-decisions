@@ -1,6 +1,6 @@
 # Palmimo × OpenAI — GPT-Live + Decisions API
 
-A Japanese conversational reference app for [Palmimo DevKit](https://github.com/Jizai-inc/palmimo-devkit).
+A multilingual conversational reference app for [Palmimo DevKit](https://github.com/Jizai-inc/palmimo-devkit).
 GPT-Live listens and speaks concurrently, while the Decisions API selects
 expressions, gestures, and occasional contributions to a conversation.
 
@@ -20,7 +20,16 @@ a general-purpose desktop voice assistant or an unattended robot controller.
   camera view, and occasionally clap when the conversation calls for it.
 - Prioritize stop requests, reject stale decisions, and settle and park on exit.
 
-Speech and prompts default to Japanese. For example:
+## Conversation language
+
+Palmimo follows the language of the person addressing it, including backchannels,
+action announcements, stop confirmations, and answers about the camera view. An
+explicit language preference takes priority until changed. In a group, it answers
+the person addressing it or uses the main conversation language when contributing.
+Names, quoted phrases, and backend notices should not trigger language changes.
+There is no separate language selector or language-detection API request.
+
+For example, speak Japanese or English, or ask to switch during a session:
 
 ```text
 パルミーモ、こんにちは
@@ -29,7 +38,21 @@ Speech and prompts default to Japanese. For example:
 ダンスして
 止まって
 自由に動いて
+
+Hi Palmimo, what do you think?
+What can you see in front of you?
+Please dance.
+Stop.
+You can move freely again.
+Let's speak English now.
+日本語に戻してね
 ```
+
+Language adaptation is model-driven, not a guarantee of equal performance in
+every language, accent, or mixed-language group. Japanese was used for the prior
+supervised hardware sessions. Validate speech, action selection, and stop behavior
+in the languages and acoustic conditions you plan to use; see the
+[manual validation checklist](docs/validation.md).
 
 ## Requirements
 
@@ -105,14 +128,18 @@ and all 21 servos' torque-off state using the SDK diagnostics.
 
 | Input | Effect |
 | --- | --- |
-| Say `止まって` | Return legs and neck to their startup stance and hold autonomous motion; conversation remains active |
-| Say `自由に動いて` or request a new motion | Resume movement |
+| Say `止まって` or `Stop` | Return legs and neck to their startup stance and hold autonomous motion; conversation remains active |
+| Say `自由に動いて` / `You can move freely again`, or request a new motion | Resume movement |
 | `s` + Enter | Show connection, audio diagnostics, and motion state |
 | `x` + Enter | Return to stance and hold motion while keeping the conversation open |
 | `i` + Enter | Release the motion hold and resume idle gestures |
 | `m` + Enter | Hold motion and mute input; already generated speech may continue |
 | `l` + Enter | Resume input |
 | `q` + Enter | Close Live, settle motion, park, release devices, and exit |
+
+The app has a direct transcript stop path for Japanese stop phrases and English
+`stop`; other languages depend on model-based action delegation. These paths do
+not promise identical recognition or latency across languages.
 
 A spoken stop is cloud-dependent and is not a physical emergency stop.
 Keep a local operator stop available. Connection loss holds motion; reconnecting

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from palmimo_sdk import Palmimo
 
-from palmimo_openai_live_decisions.actions import ACTIONS, CONTINUOUS_ACTIONS
+from palmimo_openai_live_decisions.actions import ACTION_DESCRIPTIONS, ACTIONS, CONTINUOUS_ACTIONS
 from palmimo_openai_live_decisions.audio import NullPlayback
 from palmimo_openai_live_decisions.config import Settings, session_config
 from palmimo_openai_live_decisions.events import EventLog
@@ -101,6 +101,21 @@ def test_history_is_bounded_without_invented_speaker_labels() -> None:
     assert conversation.history()[-1]["content"] == "two people"
 
 
+def test_reconnect_preserves_multilingual_turns_without_rewriting_them() -> None:
+    conversation = Conversation()
+    turns = [
+        ("user", "これから英語で話してね"),
+        ("assistant", "Sure, let's speak English."),
+        ("user", "Could you dance?"),
+        ("assistant", "I'll dance for four seconds."),
+        ("user", "Ahora en español, por favor."),
+    ]
+    for role, text in turns:
+        conversation.append(role, text)
+    config = session_config(Settings(), conversation.history())
+    assert config["input"][1:] == [{"role": role, "content": text} for role, text in turns]
+
+
 def test_celebratory_clap_does_not_repeat_on_adjacent_transcript_fragments() -> None:
     now = [0.0]
     policy = ReactionPolicy(Settings(), lambda: now[0])
@@ -119,6 +134,7 @@ def test_celebratory_clap_does_not_repeat_on_adjacent_transcript_fragments() -> 
 
 def test_config_uses_native_triggers_without_turn_gating_or_duration_limit() -> None:
     config = session_config(Settings(), [])
+    assert ACTION_DESCRIPTIONS.keys() == ACTIONS.keys()
     assert config["model"] == "gpt-live-1"
     assert config["delegation"]["type"] == "decisions"
     assert len(config["triggers"]) == 2
@@ -142,7 +158,7 @@ class FakeRobot:
     async def stop(self) -> str:
         """Observe a completed return to the neutral stance."""
         self.stopped.set()
-        return "動作を停止しました。基本姿勢で待機しています。"
+        return "Motion stopped. Holding the startup stance."
 
     async def react(self, reaction: Reaction) -> None:
         """Keep the motor busy while audio events are processed."""
@@ -174,7 +190,8 @@ async def test_audio_continues_during_human_speech_and_motor_work() -> None:
     assert robot.stopped.is_set() and session.motion is None
 
 
-async def test_delegation_executes_once_and_reports_only_after_execution() -> None:
+@pytest.mark.parametrize("acknowledgment", ["うなずくね", "I'll nod.", "Voy a asentir."])
+async def test_delegation_executes_once_and_reports_only_after_execution(acknowledgment: str) -> None:
     robot = FakeRobot()
     session = Session(Settings(action_lead_seconds=0), robot, EventLog())  # type: ignore[arg-type]
     sent: list[dict[str, Any]] = []
@@ -196,8 +213,8 @@ async def test_delegation_executes_once_and_reports_only_after_execution() -> No
     await session.delegated(event)
     await session.delegated(event)
     await asyncio.wait_for(announced.wait(), 1)
-    assert not robot.actions and "まだ実行前" in sent[0]["content"]
-    await session.dispatch({"type": "session.output_transcript.delta", "delta": "うなずくね"}, NullPlayback())
+    assert not robot.actions and "has not started yet" in sent[0]["content"]
+    await session.dispatch({"type": "session.output_transcript.delta", "delta": acknowledgment}, NullPlayback())
     assert session.motion is not None
     await session.motion
     assert robot.actions == ["nod"] and "completed" in sent[-1]["content"]
@@ -252,7 +269,7 @@ async def test_missing_spoken_acknowledgment_skips_motion() -> None:
     await session.delegated(event)
     assert session.motion is not None
     await asyncio.wait_for(session.motion, 1)
-    assert not robot.actions and "実行していません" in sent[-1]["content"]
+    assert not robot.actions and "not executed" in sent[-1]["content"]
     await session.settle()
 
 
@@ -284,8 +301,8 @@ async def test_stop_cancels_pending_ack_without_waiting_for_speech(stop_source: 
     await asyncio.wait_for(session.motion, 1)
     await session.dispatch({"type": "session.output_transcript.delta", "delta": "踊るね"}, player)
     assert not robot.actions and robot.stopped.is_set()
-    assert sum("まだ実行前" in item["content"] for item in sent) == 1
-    assert "停止しました" in sent[-1]["content"]
+    assert sum("has not started yet" in item["content"] for item in sent) == 1
+    assert "Motion stopped" in sent[-1]["content"]
     await session.settle()
 
 

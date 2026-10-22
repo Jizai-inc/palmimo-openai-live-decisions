@@ -23,7 +23,14 @@ API call or a simulated test.
    request applause. Assess actual behavior rather than event counts alone.
 8. Under supervision with the local stop available, test connection loss. Check
    that motion holds and an old command is not replayed on reconnection.
-9. End with `q`, wait for `stopped`, and independently verify device release,
+9. Repeat conversation, action announcements, stop, resume, and scene questions
+   in each target language. Switch languages mid-session, explicitly request a
+   language, and check that a quoted foreign phrase does not cause a switch.
+   Use two speakers with different languages where practical. Check that a
+   reconnect preserves the recent language preference without replaying motion.
+   Japanese stop phrases and English `stop` use a direct transcript path; other
+   languages rely on model delegation, so assess their latency separately.
+10. End with `q`, wait for `stopped`, and independently verify device release,
    21 responding servos, no hardware errors, and torque off.
 
 Record the app commit, SDK and helper versions, hardware/audio setup, API models,
