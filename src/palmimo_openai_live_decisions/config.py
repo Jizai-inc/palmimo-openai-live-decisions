@@ -104,6 +104,8 @@ class Settings:
     action_lead_seconds: float = 0.5
     vision_interval: float = 10.0
     clap_cooldown: float = 15.0
+    quiet_rearm_seconds: float = 20.0
+    quiet_name_grace: float = 5.0
 
 
 def choice(name: str, instructions: str, values: list[str]) -> dict[str, Any]:

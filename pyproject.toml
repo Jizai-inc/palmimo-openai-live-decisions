@@ -7,10 +7,12 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12,<3.13"
+# Robot dependencies are default, not an extra: Palmimo Portal installs apps with a plain `uv sync`.
 dependencies = [
     "httpx>=0.28,<1",
     "numpy>=1.26,<2",
-    "palmimo-sdk[agent]==0.1.3",
+    "palmimo-companion-agent @ git+https://github.com/Jizai-inc/palmimo-devkit.git@5b545d1a8d5551822460d2aa9edd37c4d02c147f#subdirectory=examples/agents/companion",
+    "palmimo-sdk[agent,face,hardware,vision,voice]==0.1.3",
     "python-dotenv>=1.2.4",
     "websockets>=17.1,<18",
 ]
@@ -22,12 +24,6 @@ palmimo-openai-live-decisions = "palmimo_openai_live_decisions.cli:main"
 Repository = "https://github.com/Jizai-inc/palmimo-openai-live-decisions"
 Issues = "https://github.com/Jizai-inc/palmimo-openai-live-decisions/issues"
 Documentation = "https://github.com/Jizai-inc/palmimo-openai-live-decisions#readme"
-
-[project.optional-dependencies]
-robot = [
-    "palmimo-companion-agent @ git+https://github.com/Jizai-inc/palmimo-devkit.git@5b545d1a8d5551822460d2aa9edd37c4d02c147f#subdirectory=examples/agents/companion",
-    "palmimo-sdk[agent,face,hardware,vision,voice]==0.1.3",
-]
 
 [build-system]
 requires = ["uv_build>=0.9.16,<0.10.0"]

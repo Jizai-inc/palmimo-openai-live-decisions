@@ -18,7 +18,7 @@ from .audio import NullPlayback, Playback, microphone_frames
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
 from .idle import IDLE_PAUSE_SECONDS, IdleDecider
-from .policy import Conversation, ReactionPolicy
+from .policy import QUIET_RESTORED, Conversation, ReactionPolicy
 from .robot import Robot
 from .vision import SceneVision
 
@@ -47,12 +47,13 @@ class Session:
         control: InputControl | None = None,
         vision: SceneVision | None = None,
         idle: IdleDecider | None = None,
+        policy: ReactionPolicy | None = None,
     ) -> None:
         self.settings = settings
         self.robot = robot
         self.log = log
         self.conversation = conversation if conversation is not None else Conversation()
-        self.policy = ReactionPolicy(settings)
+        self.policy = policy if policy is not None else ReactionPolicy(settings)
         self.motion: asyncio.Task[None] | None = None
         self.seen_delegations: deque[str] = deque(maxlen=256)
         self.events = 0
@@ -140,6 +141,24 @@ class Session:
             )
 
         self.replace_motion(stopped)
+
+    async def steer(self, content: str) -> None:
+        """Append conversation steering to the Live session instructions."""
+        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": content})
+
+    async def lift_quiet(self, release: str | None, reason: str) -> None:
+        """Tell the voice model that quiet listening ended; the local flag alone cannot."""
+        if release is None:
+            return
+        self.log.write("quiet_released", reason=reason)
+        await self.steer(release)
+
+    async def restore_quiet(self) -> None:
+        """Re-establish quiet listening on a new connection, which starts without appended instructions."""
+        if not self.policy.quiet:
+            return
+        self.log.write("quiet_restored")
+        await self.steer(QUIET_RESTORED)
 
     def check_streams(self) -> None:
         """Stop when capture fails, or walking loses its remote voice control path."""
@@ -278,6 +297,7 @@ class Session:
                 ):
                     self.input_tail = ""
                     self.stop_motion("spoken_stop")
+                await self.lift_quiet(self.policy.heard(event.get("delta", "")), "name_heard")
             self.log.write(
                 "transcript",
                 role=role,
@@ -302,10 +322,13 @@ class Session:
             if event.get("delegation_id"):
                 await self.delegated(event)
             else:
+                was_quiet = self.policy.quiet
                 reaction = self.policy.evaluate(event)
                 if reaction is None:
                     self.log.write("decision_ignored")
                     return
+                if self.policy.quiet != was_quiet:
+                    self.log.write("quiet_entered" if self.policy.quiet else "quiet_released", reason="decision")
                 if reaction.expression or reaction.gesture or reaction.instruction:
                     self.log.write(
                         "reaction",
@@ -314,9 +337,7 @@ class Session:
                         steering=bool(reaction.instruction),
                     )
                 if reaction.instruction:
-                    await self.send(
-                        {"type": "session.instructions.append", "delegation_id": None, "content": reaction.instruction}
-                    )
+                    await self.steer(reaction.instruction)
 
                 async def react() -> None:
                     await self.robot.react(reaction)
@@ -382,9 +403,10 @@ class Session:
             self.input_tail = ""
         if action == "resume_idle":
             self.control.motion_paused = False
-            self.policy.quiet = False
+            release = self.policy.release()
             self.input_tail = ""
             self.log.write("idle_resumed")
+            await self.lift_quiet(release, "resume_idle")
             await self.send(
                 {
                     "type": "session.commentary.append",
@@ -554,6 +576,7 @@ async def run_connection(
     session.last_server_event = time.monotonic()
     if session.control.muted:
         await send({"type": "session.input_audio.mute"})
+    await session.restore_quiet()
 
     async def receive() -> None:
         async for raw in ws:
@@ -615,9 +638,10 @@ async def run_connection(
                 )
             elif command == "i":
                 session.control.motion_paused = False
-                session.policy.quiet = False
+                release = session.policy.release()
                 session.input_tail = ""
                 session.log.write("idle_resumed", reason="operator")
+                await session.lift_quiet(release, "operator")
 
     async def scene_updates() -> None:
         while True:
@@ -646,6 +670,7 @@ async def run(
 ) -> None:
     """Run until stopped, recovering boundedly from network failures only."""
     conversation = Conversation()
+    policy = ReactionPolicy(settings)
     control = InputControl()
     failures = 0
     deadline = time.monotonic() + settings.seconds if settings.seconds else float("inf")
@@ -656,7 +681,7 @@ async def run(
     try:
         while not stop.is_set() and time.monotonic() < deadline:
             player: Playback | None = None
-            session = Session(settings, robot, log, conversation, control, vision, idle)
+            session = Session(settings, robot, log, conversation, control, vision, idle, policy)
             started = time.monotonic()
             try:
                 async with websockets.connect(

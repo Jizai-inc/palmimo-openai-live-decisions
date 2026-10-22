@@ -1,0 +1,28 @@
+schema = 1
+name = "openai-live-decisions"
+description = "Full-duplex Palmimo companion: GPT-Live speech with Decisions API expressions, gestures, and brief contributions to the conversation."
+command = [
+  "palmimo-openai-live-decisions",
+  "run",
+  "--voice",
+  "{voice}",
+  "{no_idle}",
+]
+devices = ["camera", "audio", "motor_display"]
+
+[params.voice]
+type = "string"
+default = "marin"
+pattern = "^[a-z][a-z0-9_-]{0,31}$"
+description = "GPT-Live output voice."
+
+[params.no_idle]
+type = "bool"
+default = false
+flag = "--no-idle"
+description = "Disable autonomous idle gestures, for example while comparing audio."
+
+[env.OPENAI_API_KEY]
+required = true
+description = "OpenAI API key with access to the Live, Decisions, and Responses APIs."
+help_url = "https://platform.openai.com/api-keys"

@@ -12,7 +12,14 @@ from palmimo_openai_live_decisions.actions import ACTION_DESCRIPTIONS, ACTIONS, 
 from palmimo_openai_live_decisions.audio import NullPlayback
 from palmimo_openai_live_decisions.config import Settings, session_config
 from palmimo_openai_live_decisions.events import EventLog
-from palmimo_openai_live_decisions.policy import Conversation, Reaction, ReactionPolicy
+from palmimo_openai_live_decisions.policy import (
+    NAME_RELEASE,
+    QUIET_RELEASE,
+    QUIET_RESTORED,
+    Conversation,
+    Reaction,
+    ReactionPolicy,
+)
 from palmimo_openai_live_decisions.robot import Robot
 from palmimo_openai_live_decisions.runtime import Session
 
@@ -87,6 +94,123 @@ def test_quiet_request_suppresses_reactions_until_directly_addressed() -> None:
             assert reaction.instruction is None and reaction.gesture is None
         else:
             assert reaction.gesture == "nod"
+
+
+def quiet_step(policy: ReactionPolicy, identity: str, participation: str) -> Reaction:
+    """Evaluate one fresh participation decision."""
+    policy.observe(source(identity))
+    reaction = policy.evaluate(result(identity, participation=participation))
+    assert reaction is not None
+    return reaction
+
+
+def test_leaving_quiet_tells_the_voice_model_and_resists_stale_yield() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    assert quiet_step(policy, "one", "yield").instruction and policy.quiet
+    now[0] = 60
+    assert quiet_step(policy, "two", "answer").instruction == QUIET_RELEASE and not policy.quiet
+    now[0] = 65
+    reaction = quiet_step(policy, "three", "yield")
+    assert reaction.instruction is None and not policy.quiet
+    now[0] = 61 + Settings().quiet_rearm_seconds
+    assert quiet_step(policy, "four", "yield").instruction and policy.quiet
+    assert quiet_step(policy, "five", "answer").instruction == QUIET_RELEASE
+    assert quiet_step(policy, "six", "answer").instruction is None
+
+
+def test_name_releases_quiet_only_after_the_request_itself() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    assert policy.heard("パルミーモ") is None
+    quiet_step(policy, "one", "yield")
+    now[0] = 2
+    assert policy.heard("パルミーモ、静かに聞いてて") is None and policy.quiet
+    now[0] = 30
+    assert policy.heard("ちょっと資料を開きます") is None and policy.quiet
+    assert policy.heard("アルビーモさん、今声出せる？") == NAME_RELEASE and not policy.quiet
+    now[0] = 60
+    quiet_step(policy, "two", "yield")
+    assert policy.quiet
+    now[0] = 100
+    long_question = "パルミーモ、" + "さっきのスライドの三つ目の案について家族向けにどう思うか教えてくれる？" * 2
+    assert policy.heard(long_question) == NAME_RELEASE and not policy.quiet
+
+
+def test_name_split_across_the_grace_boundary_still_releases() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    quiet_step(policy, "one", "yield")
+    assert policy.heard("静かに聞いててね、パルミーモ") is None
+    now[0] = 4.9
+    assert policy.heard("ねえパル") is None and policy.quiet
+    now[0] = 5.1
+    assert policy.heard("ミーモ、聞こえる？") == NAME_RELEASE and not policy.quiet
+
+
+def test_name_at_the_end_of_the_quiet_request_does_not_release_later() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    quiet_step(policy, "one", "yield")
+    assert policy.heard("しばらく静かに聞いててね、パルミーモ") is None
+    now[0] = 30
+    assert policy.heard("じゃあ次のスライドに行きます") is None and policy.quiet
+
+
+async def test_every_quiet_exit_appends_a_release_instruction() -> None:
+    session = Session(Settings(), FakeRobot(), EventLog())  # type: ignore[arg-type]
+    sent: list[dict[str, Any]] = []
+
+    async def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+
+    session.send = send
+    session.policy.quiet = True
+    await session.dispatch(
+        {"type": "session.input_transcript.delta", "event_id": "name", "delta": "パルミーモ、喋れる？"}, NullPlayback()
+    )
+    assert not session.policy.quiet
+    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": NAME_RELEASE}]
+    session.policy.quiet = True
+    await session.dispatch(
+        {"type": "session.input_transcript.delta", "event_id": "idle", "delta": "自由に動いて"}, NullPlayback()
+    )
+    event = result(action="resume_idle")
+    event["delegation_id"] = "resume"
+    await session.delegated(event)
+    assert not session.policy.quiet
+    assert sent[1]["type"] == "session.instructions.append" and sent[1]["content"] == QUIET_RELEASE
+    await session.settle()
+
+
+async def test_answer_decision_while_quiet_sends_the_release() -> None:
+    session = Session(Settings(), FakeRobot(), EventLog())  # type: ignore[arg-type]
+    sent: list[dict[str, Any]] = []
+
+    async def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+
+    session.send = send
+    session.policy.quiet = True
+    await session.dispatch(source("asked"), NullPlayback())
+    await session.dispatch(result("asked", participation="answer"), NullPlayback())
+    assert not session.policy.quiet
+    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RELEASE}]
+
+
+async def test_reconnect_restores_quiet_listening_only_when_quiet() -> None:
+    policy = ReactionPolicy(Settings())
+    sent: list[dict[str, Any]] = []
+
+    async def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+
+    for quiet in (False, True):
+        policy.quiet = quiet
+        session = Session(Settings(), FakeRobot(), EventLog(), policy=policy)  # type: ignore[arg-type]
+        session.send = send
+        await session.restore_quiet()
+    assert sent == [{"type": "session.instructions.append", "delegation_id": None, "content": QUIET_RESTORED}]
 
 
 def test_history_is_bounded_without_invented_speaker_labels() -> None:
