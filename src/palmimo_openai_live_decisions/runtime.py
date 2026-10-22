@@ -17,9 +17,9 @@ from .actions import ACTION_DESCRIPTIONS, ACTIONS, CONTINUOUS_ACTIONS
 from .audio import NullPlayback, Playback, microphone_frames
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
-from .idle import IDLE_PAUSE_SECONDS, IdleDecider
-from .policy import Conversation, ReactionPolicy
-from .robot import Robot
+from .idle import IDLE_ACTIONS, IDLE_PAUSE_SECONDS, IdleDecider
+from .policy import Conversation, Reaction, ReactionPolicy
+from .robot import FACES, Robot
 from .vision import SceneVision
 
 
@@ -319,6 +319,8 @@ class Session:
                     )
 
                 async def react() -> None:
+                    if reaction.gesture in {"nod", "shake"}:
+                        self.policy.applied_neck_motion()
                     await self.robot.react(reaction)
                     self.log.write("reaction_completed", expression=reaction.expression, gesture=reaction.gesture)
                     if reaction.gesture and not self.settings.audio_only:
@@ -423,6 +425,8 @@ class Session:
                 if not self.settings.audio_only and not await self.announce_action(action, delegation):
                     return
                 self.log.write("action_execution_started", action=action)
+                if ACTIONS[action][0] in {"nod", "head_shake", "look", "look_center"}:
+                    self.policy.applied_neck_motion()
                 result = (
                     await self.robot.action(action, started)
                     if action in CONTINUOUS_ACTIONS
@@ -479,7 +483,9 @@ class Session:
             started = time.monotonic()
             context = "\n".join(f"{part['role']}: {part['content']}" for part in self.conversation.history())
             scene = self.scene if started - self.scene_time < 20 else ""
-            self.idle_request = asyncio.create_task(self.idle.choose(context, scene, self.robot.face_tracking))
+            self.idle_request = asyncio.create_task(
+                self.idle.choose(context, scene, self.robot.face_tracking, self.policy.neck_available())
+            )
             try:
                 name = await self.idle_request
             except asyncio.CancelledError:
@@ -499,13 +505,22 @@ class Session:
             if name is None:
                 await asyncio.sleep(2)
                 continue
+            if IDLE_ACTIONS[name].family in {"neck", "gaze"} and not self.policy.neck_available():
+                self.log.write("idle_discarded", reason="neck_cooldown")
+                continue
 
             async def perform(name: str = name, started: float = started) -> None:
                 assert self.idle is not None
+                action = IDLE_ACTIONS[name]
+                if action.family in {"neck", "gaze"}:
+                    self.policy.applied_neck_motion()
                 self.idle.history.append(name)
                 self.log.write("idle_started", action=name, decision_ms=round((time.monotonic() - started) * 1000))
                 try:
                     await self.robot.idle(name)
+                    if action.face:
+                        expression = next(key for key, value in FACES.items() if value == action.face)
+                        self.policy.applied_motion(Reaction(expression=expression))
                     self.log.write("idle_completed", action=name)
                 finally:
                     self.next_idle_at = time.monotonic() + random.uniform(*IDLE_PAUSE_SECONDS)
@@ -581,13 +596,20 @@ async def run_connection(
             if time.monotonic() - last_audio_log >= 5:
                 session.log.write("audio", **player.stats())
                 last_audio_log = time.monotonic()
-            if session.idle is None and session.robot.face_tracking and time.monotonic() - last_gaze >= 8:
+            if (
+                session.idle is None
+                and session.robot.face_tracking
+                and time.monotonic() - last_gaze >= session.settings.neck_cooldown
+                and session.policy.neck_available()
+            ):
 
                 async def gaze() -> None:
+                    session.policy.applied_neck_motion()
                     await session.robot.call("look_at_face", {"seconds": 1.0})
 
                 if session.schedule(gaze):
                     last_gaze = time.monotonic()
+                    session.policy.applied_neck_motion()
             await asyncio.sleep(0.1)
 
     async def operator() -> None:

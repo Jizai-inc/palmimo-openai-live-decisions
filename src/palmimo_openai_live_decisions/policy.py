@@ -63,6 +63,7 @@ class ReactionPolicy:
         self.applied: dict[str, int] = {}
         self.sequence = 0
         self.last_gesture = float("-inf")
+        self.last_neck_motion = float("-inf")
         self.last_clap = float("-inf")
         self.last_contribution = float("-inf")
         self.last_expression: str | None = None
@@ -119,7 +120,7 @@ class ReactionPolicy:
                 "one brief relevant thought in the conversation language if helpful. Do not repeat a recent answer."
             )
         expression = answers.get("expression")
-        if expression not in {"neutral", "happy", "sad", "thinking", "surprised"}:
+        if expression not in {"neutral", "happy", "sad", "thinking", "surprised", "curious"}:
             expression = None
         if expression == self.last_expression:
             expression = None
@@ -132,12 +133,24 @@ class ReactionPolicy:
             gesture = None
         if gesture == "clap" and self.clock() - self.last_clap < self.settings.clap_cooldown:
             gesture = None
+        if gesture in {"nod", "shake"} and not self.neck_available():
+            gesture = None
         return Reaction(expression, gesture, instruction)
+
+    def neck_available(self) -> bool:
+        """Share one interval between transcript gestures and autonomous gaze."""
+        return self.clock() - self.last_neck_motion >= self.settings.neck_cooldown
+
+    def applied_neck_motion(self) -> None:
+        """Reserve the next interval when a neck action actually starts or is accepted."""
+        self.last_neck_motion = self.clock()
 
     def applied_motion(self, reaction: Reaction) -> None:
         """Consume cooldown only after an action is accepted by the scheduler."""
         if reaction.gesture:
             self.last_gesture = self.clock()
+        if reaction.gesture in {"nod", "shake"}:
+            self.applied_neck_motion()
         if reaction.gesture == "clap":
             self.last_clap = self.clock()
         if reaction.expression:

@@ -22,27 +22,40 @@ async def discard(event: dict[str, Any]) -> None:
     """Receive protocol output without starting a server."""
 
 
-def test_idle_options_cannot_get_stuck_in_a_gaze_and_expression_cycle() -> None:
+def test_idle_begins_with_display_only_and_never_forces_movement() -> None:
     decider = IdleDecider("test")
-    decider.history.extend(["tilt", "attend", "curious", "look_left", "smile", "nod"])
-    offered = decider.options(True)
-    assert offered and all(IDLE_ACTIONS[name].family == "body" for name in offered)
-    assert "tilt" not in offered
+    assert {IDLE_ACTIONS[name].family for name in decider.options(True)} == {"display"}
+    decider.history.extend(["curious", "thinking", "smile", "rest", "curious", "thinking"])
+    assert "thinking" in decider.options(True)
+    assert "tilt" in decider.options(True)
 
 
-@pytest.mark.parametrize("history", [["tilt"], ["tilt", "attend", "curious"]])
-def test_idle_body_motion_leaves_room_for_smaller_gestures(history: list[str]) -> None:
+@pytest.mark.parametrize("history", [["tilt"], ["attend", "curious"], ["nod", "smile", "rest"]])
+def test_idle_physical_motion_leaves_room_for_three_display_turns(history: list[str]) -> None:
     decider = IdleDecider("test")
     decider.history.extend(history)
     offered = decider.options(True)
-    assert offered and all(IDLE_ACTIONS[name].family != "body" for name in offered)
+    assert offered and all(IDLE_ACTIONS[name].family == "display" for name in offered)
 
 
-def test_idle_body_motion_becomes_optional_after_three_smaller_gestures() -> None:
+def test_idle_neck_options_share_the_conversation_cooldown() -> None:
     decider = IdleDecider("test")
-    decider.history.extend(["tilt", "attend", "curious", "look_left"])
-    families = {IDLE_ACTIONS[name].family for name in decider.options(False)}
-    assert "body" in families and "display" in families
+    decider.history.extend(["tilt", "curious", "smile", "rest"])
+    assert {IDLE_ACTIONS[name].family for name in decider.options(True)} == {"body", "gaze", "neck", "display"}
+    assert {IDLE_ACTIONS[name].family for name in decider.options(True, False)} == {"body", "display"}
+    assert "attend" not in decider.options(False)
+
+
+def test_idle_keeps_display_majority_even_when_model_always_prefers_movement() -> None:
+    decider = IdleDecider("test")
+    chosen: list[str] = []
+    for _ in range(20):
+        options = decider.options(True)
+        name = next((name for name in options if IDLE_ACTIONS[name].family != "display"), "curious")
+        decider.history.append(name)
+        chosen.append(IDLE_ACTIONS[name].family)
+    assert sum(family != "display" for family in chosen) == 5
+    assert all(sum(family != "display" for family in chosen[i : i + 4]) <= 1 for i in range(17))
 
 
 def delegation(action: str) -> dict[str, Any]:
@@ -82,7 +95,7 @@ async def test_decider_accepts_only_offered_choices_and_bounds_context(
     client = httpx.AsyncClient
     monkeypatch.setattr(idle.httpx, "AsyncClient", lambda **kw: client(transport=httpx.MockTransport(handle), **kw))
     decider = IdleDecider("test-key")
-    decider.history.append("look_left")
+    decider.history.extend(["look_left", "curious", "smile", "rest"])
     answer = await decider.choose("a" * 5000, "b" * 5000, False)
     assert answer == ("tilt" if choice == "tilt" else None)
     context = json.loads(requests[0]["input"])
@@ -198,6 +211,7 @@ async def test_idle_pause_preserves_audio_reactions_and_stop(monkeypatch: pytest
     try:
         await asyncio.wait_for(completed.wait(), 1)
         completed.clear()
+        assert session.policy.last_expression == "curious"
         assert not session.idle_available()
         player = NullPlayback()
         await session.dispatch({"type": "session.output_audio.delta", "delta": "AAA="}, player)
