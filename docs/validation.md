@@ -17,7 +17,11 @@ API call or a simulated test.
 5. Request walking briefly, then say the stop command. Verify that legs and neck
    return to the startup stance and remain held. Also verify local `x`.
 6. Say the idle-resume phrase or make a new motion request. Check that autonomous
-   motion resumes and does not audibly disrupt conversation.
+   motion resumes and does not audibly disrupt conversation. Observe for at least
+   a minute during both silence and conversation: expressions should carry most
+   idle reactions, with no repeated neck movement on adjacent transcript fragments.
+   Request a nod during the automatic neck cooldown and check that the explicit
+   request still executes. Confirm the face visibly changes with context.
 7. Wave silently and confirm that Palmimo waves back without announcing the
    gesture. Ask about a visible object, replace the object and ask again, then
    request applause. Assess actual behavior rather than event counts alone.

@@ -12,6 +12,7 @@ from palmimo_openai_live_decisions.actions import ACTION_DESCRIPTIONS, ACTIONS, 
 from palmimo_openai_live_decisions.audio import NullPlayback
 from palmimo_openai_live_decisions.config import Settings, session_config
 from palmimo_openai_live_decisions.events import EventLog
+from palmimo_openai_live_decisions.idle import IdleDecider
 from palmimo_openai_live_decisions.policy import Conversation, Reaction, ReactionPolicy
 from palmimo_openai_live_decisions.robot import Robot
 from palmimo_openai_live_decisions.runtime import Session
@@ -73,6 +74,62 @@ def test_policy_cooldown_only_counts_accepted_motions() -> None:
     policy.observe(source("two"))
     reaction = policy.evaluate(result("two", gesture="nod", participation="contribute"))
     assert reaction is not None and reaction.gesture is None and reaction.instruction
+
+
+def test_neck_cooldown_keeps_expressions_and_applause_available() -> None:
+    now = [0.0]
+    policy = ReactionPolicy(Settings(), lambda: now[0])
+    policy.applied_neck_motion()
+    for identity, seconds, direction, gesture in [
+        ("early", 4.0, "input", "nod"),
+        ("reply", 10.0, "output", "shake"),
+        ("celebrate", 15.0, "input", "clap"),
+        ("ready", 20.0, "output", "nod"),
+    ]:
+        now[0] = seconds
+        policy.observe(source(identity, direction))
+        reaction = policy.evaluate(result(identity, direction, gesture=gesture, expression="curious"))
+        assert reaction is not None and reaction.expression == "curious"
+        assert reaction.gesture == (gesture if identity in {"celebrate", "ready"} else None)
+
+
+async def test_idle_gaze_and_transcript_reactions_use_one_neck_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [100.0]
+    started = asyncio.Event()
+    robot = Robot(Palmimo())
+    decider = IdleDecider("test")
+    decider.history.extend(["curious", "smile", "rest"])
+
+    async def choose(conversation: str, scene: str, tracking: bool, neck_available: bool) -> str:
+        assert neck_available
+        return "attend"
+
+    async def move(name: str) -> None:
+        assert name == "attend"
+        started.set()
+
+    monkeypatch.setattr(decider, "choose", choose)
+    monkeypatch.setattr(robot, "idle", move)
+    session = Session(Settings(), robot, EventLog(), idle=decider)
+    session.policy.clock = lambda: now[0]
+    loop = asyncio.create_task(session.idle_loop())
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        assert not session.policy.neck_available()
+        now[0] = 110.0
+        session.policy.observe(source())
+        reaction = session.policy.evaluate(result(gesture="nod", expression="happy"))
+        assert reaction == Reaction(expression="happy")
+        now[0] = 120.0
+        session.policy.observe(source("later"))
+        reaction = session.policy.evaluate(result("later", gesture="nod"))
+        assert reaction is not None and reaction.gesture == "nod"
+        session.policy.applied_motion(reaction)
+        assert all(name not in decider.options(True, session.policy.neck_available()) for name in ("nod", "attend"))
+    finally:
+        loop.cancel()
+        await asyncio.gather(loop, return_exceptions=True)
+        await session.settle()
 
 
 def test_quiet_request_suppresses_reactions_until_directly_addressed() -> None:
@@ -194,6 +251,8 @@ async def test_audio_continues_during_human_speech_and_motor_work() -> None:
 async def test_delegation_executes_once_and_reports_only_after_execution(acknowledgment: str) -> None:
     robot = FakeRobot()
     session = Session(Settings(action_lead_seconds=0), robot, EventLog())  # type: ignore[arg-type]
+    session.policy.applied_neck_motion()
+    assert not session.policy.neck_available()
     sent: list[dict[str, Any]] = []
     announced = asyncio.Event()
 
@@ -220,6 +279,25 @@ async def test_delegation_executes_once_and_reports_only_after_execution(acknowl
     assert robot.actions == ["nod"] and "completed" in sent[-1]["content"]
     assert sent[-1]["type"] == "session.thinking.append"
     await session.settle()
+
+
+async def test_expression_reaction_updates_the_display_without_motor_frames() -> None:
+    class Display:
+        def __init__(self) -> None:
+            self.expressions: list[str] = []
+
+        def set_expression(self, name: str, hold_ms: int = 0) -> str:
+            self.expressions.append(name)
+            return f"OK {name}"
+
+    display = Display()
+    frames: list[dict[str, int]] = []
+    robot = Robot(Palmimo(display=display, on_step=frames.append))  # type: ignore[arg-type]
+    await robot.react(Reaction(expression="curious"))
+    await robot.react(Reaction(expression="thinking"))
+    await robot.react(Reaction(expression="happy"))
+    assert display.expressions == ["CURIOUS", "THINKING", "HAPPY"]
+    assert frames == []
 
 
 async def test_explicit_action_preempts_gesture_without_blocking_audio() -> None:

@@ -95,6 +95,7 @@ class Settings:
     idle_enabled: bool = True
     seconds: float = 0
     gesture_cooldown: float = 4.0
+    neck_cooldown: float = 20.0
     contribution_cooldown: float = 15.0
     decision_ttl: float = 3.0
     confidence: float = 0.65
@@ -122,13 +123,17 @@ def reaction_questions(output: bool = False) -> list[dict[str, Any]]:
     questions = [
         choice(
             "expression",
-            f"Choose a restrained expression for {perspective}, in any language. Use neutral if unclear.",
-            ["neutral", "happy", "sad", "thinking", "surprised"],
+            f"Choose a restrained expression for {perspective}, in any language. "
+            "Prefer a facial expression over a neck gesture for ordinary listening and replies. "
+            "Use curious for interest, thinking for reflection, happy for warmth, and neutral if unclear.",
+            ["neutral", "happy", "sad", "thinking", "surprised", "curious"],
         ),
         choice(
             "gesture",
             f"Choose a gesture for {perspective}, in any language. Default to none. "
-            "Use nod for a meaningful acknowledgment, not necessarily agreement; shake only for clear negation. "
+            "Facial expressions usually suffice. Reserve nod for an occasional meaningful acknowledgment, "
+            "not necessarily agreement; shake only for emphatic negation, not each negative word or reply. "
+            "Never gesture on each transcript fragment or mirror a gesture already made for the same exchange. "
             "Use none for explicit motion requests, which delegation handles separately. "
             "Use clap only to celebrate a person's achievement, success, or good news, not ordinary replies. "
             "Do not repeatedly applaud the same news.",

@@ -17,7 +17,14 @@ from .policy import Reaction
 from .vision import CameraFrames
 from .walking import make_walking_tool
 
-FACES = {"neutral": "IDLE", "happy": "HAPPY", "sad": "SAD", "thinking": "THINKING", "surprised": "SURPRISE"}
+FACES = {
+    "neutral": "IDLE",
+    "happy": "HAPPY",
+    "sad": "SAD",
+    "thinking": "THINKING",
+    "surprised": "SURPRISE",
+    "curious": "CURIOUS",
+}
 
 
 class Robot:
