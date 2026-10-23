@@ -35,7 +35,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          version: '0.9.16'
+          version: '0.13.5'
           python-version: '3.12'
       - run: uv sync --frozen --group dev
       - run: uv run --frozen ruff check .
@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          version: '0.9.16'
+          version: '0.13.5'
           python-version: '3.12'
       - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libgl1 libglib2.0-0
       - run: uv sync --frozen --extra robot --group dev
