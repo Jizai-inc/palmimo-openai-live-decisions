@@ -92,7 +92,7 @@ async def test_reconnect_keeps_history_and_mute_without_reopening_robot(monkeypa
     assert len(sessions) == 2 and sessions[1].control.muted and sessions[1].control.motion_paused
     assert sessions[1].policy is sessions[0].policy and sessions[1].policy.quiet
     assert any(part["content"] == "Remember this conversation." for part in histories[1])
-    assert "身体動作は停止" in histories[1][-1]["content"]
+    assert "Motion was stopped" in histories[1][-1]["content"]
     assert all(player.closed for player in players)
 
 
@@ -124,7 +124,7 @@ async def test_parking_runs_even_when_tool_cancellation_fails() -> None:
 
 async def test_audio_only_does_not_report_a_successful_motion() -> None:
     robot = Robot(Palmimo(), motion_enabled=False)
-    assert "実行していません" in await robot.action("nod")
+    assert "no physical action" in await robot.action("nod")
 
 
 def test_playback_preserves_pcm_and_reports_underruns(monkeypatch: pytest.MonkeyPatch) -> None:

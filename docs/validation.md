@@ -17,13 +17,36 @@ API call or a simulated test.
 5. Request walking briefly, then say the stop command. Verify that legs and neck
    return to the startup stance and remain held. Also verify local `x`.
 6. Say the idle-resume phrase or make a new motion request. Check that autonomous
-   motion resumes and does not audibly disrupt conversation.
+   motion resumes and does not audibly disrupt conversation. Observe for at least
+   a minute during both silence and conversation: expressions should carry most
+   idle reactions, with no repeated neck movement on adjacent transcript fragments.
+   Request a nod during the automatic neck cooldown and check that the explicit
+   request still executes. Confirm the face visibly changes with context.
 7. Wave silently and confirm that Palmimo waves back without announcing the
    gesture. Ask about a visible object, replace the object and ask again, then
    request applause. Assess actual behavior rather than event counts alone.
 8. Under supervision with the local stop available, test connection loss. Check
    that motion holds and an old command is not replayed on reconnection.
-9. End with `q`, wait for `stopped`, and independently verify device release,
+9. Repeat conversation, action announcements, stop, resume, and scene questions
+   in each target language. Switch languages mid-session, explicitly request a
+   language, and check that a quoted foreign phrase does not cause a switch.
+   Use two speakers with different languages where practical. Check that a
+   reconnect preserves the recent language preference without replaying motion.
+   Japanese stop phrases and English `stop` use a direct transcript path; other
+   languages rely on model delegation, so assess their latency separately.
+10. In both Japanese and English, ask Palmimo to just listen, converse with another
+   person for 20–30 seconds, then ask "can you hear me?" / "聞こえてる？" without
+   its name. Confirm a meaningful audible answer, then immediately ask it to be
+   quiet again. Repeat with "please talk" and "what do you think?". While quiet,
+   mention Palmimo to someone else and confirm it stays quiet; then address it
+   directly by name. Test `i` and the spoken idle-resume command as recovery paths.
+   Reconnect while quiet and confirm it remains quiet until a new direct request.
+   Check quiet transitions, steering acceptance, and subsequent assistant text
+   against what was heard. An acknowledgment event alone is not a successful reply.
+11. Install the app through Portal using the PR branch or a release containing
+   this manifest. Set the API key locally, start with the selected voice, then
+   stop through Portal and verify graceful parking and resource release.
+12. End with `q`, wait for `stopped`, and independently verify device release,
    21 responding servos, no hardware errors, and torque off.
 
 Record the app commit, SDK and helper versions, hardware/audio setup, API models,

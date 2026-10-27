@@ -6,6 +6,7 @@ import contextlib
 import json
 import random
 import time
+import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
@@ -13,13 +14,13 @@ from typing import Any
 
 import websockets
 
-from .actions import ACTION_PHRASES, ACTIONS, CONTINUOUS_ACTIONS
+from .actions import ACTION_DESCRIPTIONS, ACTIONS, CONTINUOUS_ACTIONS
 from .audio import NullPlayback, Playback, microphone_frames
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
-from .idle import IDLE_PAUSE_SECONDS, IdleDecider
-from .policy import QUIET_RESTORED, Conversation, ReactionPolicy
-from .robot import Robot
+from .idle import IDLE_ACTIONS, IDLE_PAUSE_SECONDS, IdleDecider
+from .policy import QUIET_RESTORED, Conversation, Reaction, ReactionPolicy
+from .robot import FACES, Robot
 from .vision import SceneVision
 
 
@@ -76,6 +77,8 @@ class Session:
         self.motion_epoch = 0
         self.scene = ""
         self.scene_time = 0.0
+        self.pending_steering: dict[str, str] = {}
+        self.awaiting_quiet_reply = False
         self.send: Callable[[dict[str, Any]], Awaitable[None]]
 
     def schedule(self, work: Callable[[], Coroutine[Any, Any, None]], *, origin: str = "reaction") -> bool:
@@ -135,7 +138,8 @@ class Session:
                 {
                     "type": "session.commentary.append",
                     "delegation_id": None,
-                    "content": result + "新しい動作依頼か『自由に動いて』で再開します。",
+                    "content": result + " A new motion request or permission to move freely resumes movement. "
+                    "Confirm briefly in the current conversation language.",
                 }
             )
 
@@ -143,7 +147,39 @@ class Session:
 
     async def steer(self, content: str) -> None:
         """Append conversation steering to the Live session instructions."""
-        await self.send({"type": "session.instructions.append", "delegation_id": None, "content": content})
+        identity = uuid.uuid4().hex
+        self.pending_steering[identity] = "quiet" if self.policy.quiet else "active"
+        while len(self.pending_steering) > 64:
+            del self.pending_steering[next(iter(self.pending_steering))]
+        await self.send(
+            {"type": "session.instructions.append", "event_id": identity, "delegation_id": None, "content": content}
+        )
+        self.log.write("steering_sent", event_id=identity, quiet=self.policy.quiet)
+
+    async def sync_listening(self) -> None:
+        """Give native Decisions the current state without replaying past requests."""
+        state = "quiet" if self.policy.quiet else "active"
+        await self.send(
+            {
+                "type": "decision.item.create",
+                "event_id": uuid.uuid4().hex,
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"Application listening state: {state}. Earlier listening requests have been handled. "
+                                "This is a state notice, not human speech or a request. Classify only the latest human words: "
+                                "use yield for a new quiet request and answer for a new direct address or request to speak. "
+                                "Do not repeat a past request or treat a name mentioned to someone else as a direct address."
+                            ),
+                        }
+                    ],
+                },
+            }
+        )
 
     async def lift_quiet(self, release: str | None, reason: str) -> None:
         """Tell the voice model that quiet listening ended; the local flag alone cannot."""
@@ -151,6 +187,8 @@ class Session:
             return
         self.log.write("quiet_released", reason=reason)
         await self.steer(release)
+        await self.sync_listening()
+        self.awaiting_quiet_reply = True
 
     async def restore_quiet(self) -> None:
         """Re-establish quiet listening on a new connection, which starts without appended instructions."""
@@ -158,6 +196,7 @@ class Session:
             return
         self.log.write("quiet_restored")
         await self.steer(QUIET_RESTORED)
+        await self.sync_listening()
 
     def check_streams(self) -> None:
         """Stop when capture fails, or walking loses its remote voice control path."""
@@ -176,8 +215,11 @@ class Session:
                 {
                     "type": "session.commentary.append",
                     "delegation_id": delegation,
-                    "content": f"動作開始の前置き:「{ACTION_PHRASES[action]}」。まだ実行前です。"
-                    "この一言を先に発声してください。発声に合わせて身体が動きます。",
+                    "content": f"Action announcement: {ACTION_DESCRIPTIONS[action]}. The action has not started yet. "
+                    "Say a brief, natural acknowledgment in the language of the latest spoken request now, "
+                    "even if this short request changed language. Honor an explicit language preference if present. "
+                    "Convey the intent; do not read this English notice verbatim or switch language because of it. "
+                    "The body will start with your speech.",
                 }
             )
             try:
@@ -188,7 +230,7 @@ class Session:
                     {
                         "type": "session.thinking.append",
                         "delegation_id": delegation,
-                        "content": "前置きの発声を確認できなかったため動作は実行していません。実行済みとは言わないでください。",
+                        "content": "The action was not executed because voice onset was not confirmed. Do not claim execution.",
                     }
                 )
                 return False
@@ -245,16 +287,19 @@ class Session:
             description, age = await self.vision.describe(question)
             self.scene = description
             self.scene_time = time.monotonic() - age
-            content = f"最新の視覚観察（取得から{age:.1f}秒）: {description}"
+            content = f"Visual observation (captured {age:.1f} seconds ago): {description}"
             self.log.write("vision_observed", requested=delegation is not None, age_seconds=round(age, 2))
         except Exception as exc:
             self.scene = ""
             content = (
-                "最新の視覚観察: 現在の画像を確認できませんでした。以前の観察を現在の様子として答えないでください。"
+                "Visual observation: the current image could not be checked. "
+                "Do not describe an earlier observation as the current scene."
             )
             self.log.write("vision_unavailable", error=type(exc).__name__)
-        if delegation is None:
-            content += "\n背景の参考情報です。この更新だけを理由に発言や身体動作を始めないでください。"
+        if delegation is not None:
+            content += "\nAnswer naturally in the current conversation language, not the observation's language."
+        else:
+            content += "\nBackground context only; do not speak or move solely because of this update."
         await self.send(
             {
                 "type": "session.commentary.append" if delegation else "session.thinking.append",
@@ -281,6 +326,9 @@ class Session:
             self.conversation.append(role, event.get("delta", ""))
             if role == "assistant" and event.get("delta", "").strip() and self.action_speech is not None:
                 self.action_speech.set()
+            if role == "assistant" and event.get("delta", "").strip() and self.awaiting_quiet_reply:
+                self.awaiting_quiet_reply = False
+                self.log.write("quiet_reply_started")
             if role == "user":
                 self.input_events += 1
                 self.input_tail = (self.input_tail + event.get("delta", ""))[-32:]
@@ -290,7 +338,6 @@ class Session:
                 ):
                     self.input_tail = ""
                     self.stop_motion("spoken_stop")
-                await self.lift_quiet(self.policy.heard(event.get("delta", "")), "name_heard")
             self.log.write(
                 "transcript",
                 role=role,
@@ -331,22 +378,27 @@ class Session:
                     )
                 if reaction.instruction:
                     await self.steer(reaction.instruction)
+                    if self.policy.quiet != was_quiet:
+                        await self.sync_listening()
+                        self.awaiting_quiet_reply = not self.policy.quiet
 
                 async def react() -> None:
+                    if reaction.gesture in {"nod", "shake"}:
+                        self.policy.applied_neck_motion()
                     await self.robot.react(reaction)
                     self.log.write("reaction_completed", expression=reaction.expression, gesture=reaction.gesture)
                     if reaction.gesture and not self.settings.audio_only:
                         description = {
-                            "nod": "短くうなずきました",
-                            "shake": "短く首を横に振りました",
-                            "clap": "拍手しました",
+                            "nod": "nodded briefly",
+                            "shake": "shook the head briefly",
+                            "clap": "clapped",
                         }[reaction.gesture]
                         await self.send(
                             {
                                 "type": "session.thinking.append",
                                 "delegation_id": None,
-                                "content": f"身体の実行結果: 自発的に{description}。これは会話中の仕草です。"
-                                "この通知だけを理由に発話したり、新しい動作を依頼したりしないでください。",
+                                "content": f"Motion result: spontaneously {description}. This was a conversational gesture. "
+                                "Do not speak or request another action solely because of this notice.",
                             }
                         )
 
@@ -358,6 +410,11 @@ class Session:
                     react, origin="reaction" if reaction.gesture else "expression"
                 ):
                     self.policy.applied_motion(reaction)
+        elif kind == "session.instructions.appended":
+            identity = event.get("client_event_id", "")
+            state = self.pending_steering.pop(identity, None)
+            if state is not None:
+                self.log.write("steering_accepted", event_id=identity, listening=state)
         elif kind == "session.input_audio.muted":
             self.log.write("microphone", muted=True)
         elif kind == "session.input_audio.unmuted":
@@ -404,7 +461,7 @@ class Session:
                 {
                     "type": "session.commentary.append",
                     "delegation_id": delegation,
-                    "content": "自発的な仕草を再開しました。",
+                    "content": "Autonomous gestures have resumed. Confirm briefly in the current conversation language.",
                 }
             )
             return
@@ -416,7 +473,7 @@ class Session:
                     {
                         "type": "session.thinking.append",
                         "delegation_id": delegation,
-                        "content": "最新の視覚観察を取得中です。先行する結果を待ってください。",
+                        "content": "A fresh visual observation is in progress. Wait for that result.",
                     }
                 )
             return
@@ -427,7 +484,7 @@ class Session:
                 {
                     "type": "session.thinking.append",
                     "delegation_id": delegation,
-                    "content": "歩行を開始しました。『止まって』と言われるまで続けています。まだ完了していません。開始宣言を繰り返す必要はありません。",
+                    "content": "Walking has started and continues until stopped. It is not complete. Do not repeat the start announcement.",
                 }
             )
 
@@ -438,6 +495,8 @@ class Session:
                 if not self.settings.audio_only and not await self.announce_action(action, delegation):
                     return
                 self.log.write("action_execution_started", action=action)
+                if ACTIONS[action][0] in {"nod", "head_shake", "look", "look_center"}:
+                    self.policy.applied_neck_motion()
                 result = (
                     await self.robot.action(action, started)
                     if action in CONTINUOUS_ACTIONS
@@ -448,9 +507,9 @@ class Session:
                 {
                     "type": "session.commentary.append" if action == "stop" else "session.thinking.append",
                     "delegation_id": delegation,
-                    "content": result
+                    "content": result + " Confirm briefly in the current conversation language."
                     if action == "stop"
-                    else f"実行結果: {result}。この完了通知だけを理由に開始宣言を繰り返さないでください。",
+                    else f"Execution result: {result}. Do not repeat a start announcement because of this completion notice.",
                 }
             )
 
@@ -459,7 +518,7 @@ class Session:
                 {
                     "type": "session.thinking.append",
                     "delegation_id": delegation,
-                    "content": "実行する動作はありません。会話を続けてください。",
+                    "content": "There is no action to execute. Continue the conversation in the person's language.",
                 }
             )
         else:
@@ -494,7 +553,9 @@ class Session:
             started = time.monotonic()
             context = "\n".join(f"{part['role']}: {part['content']}" for part in self.conversation.history())
             scene = self.scene if started - self.scene_time < 20 else ""
-            self.idle_request = asyncio.create_task(self.idle.choose(context, scene, self.robot.face_tracking))
+            self.idle_request = asyncio.create_task(
+                self.idle.choose(context, scene, self.robot.face_tracking, self.policy.neck_available())
+            )
             try:
                 name = await self.idle_request
             except asyncio.CancelledError:
@@ -514,13 +575,22 @@ class Session:
             if name is None:
                 await asyncio.sleep(2)
                 continue
+            if IDLE_ACTIONS[name].family in {"neck", "gaze"} and not self.policy.neck_available():
+                self.log.write("idle_discarded", reason="neck_cooldown")
+                continue
 
             async def perform(name: str = name, started: float = started) -> None:
                 assert self.idle is not None
+                action = IDLE_ACTIONS[name]
+                if action.family in {"neck", "gaze"}:
+                    self.policy.applied_neck_motion()
                 self.idle.history.append(name)
                 self.log.write("idle_started", action=name, decision_ms=round((time.monotonic() - started) * 1000))
                 try:
                     await self.robot.idle(name)
+                    if action.face:
+                        expression = next(key for key, value in FACES.items() if value == action.face)
+                        self.policy.applied_motion(Reaction(expression=expression))
                     self.log.write("idle_completed", action=name)
                 finally:
                     self.next_idle_at = time.monotonic() + random.uniform(*IDLE_PAUSE_SECONDS)
@@ -597,13 +667,20 @@ async def run_connection(
             if time.monotonic() - last_audio_log >= 5:
                 session.log.write("audio", **player.stats())
                 last_audio_log = time.monotonic()
-            if session.idle is None and session.robot.face_tracking and time.monotonic() - last_gaze >= 8:
+            if (
+                session.idle is None
+                and session.robot.face_tracking
+                and time.monotonic() - last_gaze >= session.settings.neck_cooldown
+                and session.policy.neck_available()
+            ):
 
                 async def gaze() -> None:
+                    session.policy.applied_neck_motion()
                     await session.robot.call("look_at_face", {"seconds": 1.0})
 
                 if session.schedule(gaze):
                     last_gaze = time.monotonic()
+                    session.policy.applied_neck_motion()
             await asyncio.sleep(0.1)
 
     async def operator() -> None:
@@ -628,6 +705,7 @@ async def run_connection(
                     audio=player.stats(),
                     walking=session.robot.walking,
                     motion_paused=session.control.motion_paused,
+                    quiet=session.policy.quiet,
                 )
             elif command == "i":
                 session.control.motion_paused = False
@@ -674,6 +752,7 @@ async def run(
     try:
         while not stop.is_set() and time.monotonic() < deadline:
             player: Playback | None = None
+            policy.reconnect()
             session = Session(settings, robot, log, conversation, control, vision, idle, policy)
             started = time.monotonic()
             try:
@@ -715,7 +794,7 @@ async def run(
                 control.motion_paused = True
                 conversation.append(
                     "developer",
-                    "通信が中断したため身体動作は停止しました。新しい実行依頼があるまで再開しないでください。",
+                    "Motion was stopped after a connection interruption. Do not resume without a new request.",
                 )
                 failures = 1 if time.monotonic() - started > 30 else failures + 1
                 log.write("connection_lost", error=type(exc).__name__, attempt=failures)

@@ -11,24 +11,50 @@ they never supply servo positions or executable code.
 Decisions transcript triggers evaluate both human and assistant transcript
 fragments with `gpt-6-luna`. The application rejects stale, duplicate,
 out-of-order, and low-confidence results, and limits gesture and contribution
-frequency independently.
+frequency independently. Automatic nods, head shakes, and idle gaze share a
+20-second minimum interval. A suppressed neck gesture can still change the face
+or steer conversation; the interval never blocks an explicitly requested motion.
+Explicit neck requests restart that interval for subsequent autonomous movement.
+
+GPT-Live also chooses the conversation language from spoken context and explicit
+preferences. Action notices describe intent rather than supply a fixed spoken
+phrase. The voice model renders announcements, stop results, and visual facts in
+the conversation language; internal notices do not select a language. This adds
+no language-detection round trip or language-specific TTS service. Reconnect
+history retains the recent multilingual turns and any preference still in that
+bounded context, rather than resetting speech to a fixed language.
 
 Explicit motion requests use native Decisions delegation. A separate Decisions
 loop chooses silent idle gestures from recent conversation, a recent scene
 description, and movement history. It does not wait for a silence threshold.
 After each idle action settles, a random two-to-four-second pause gives the robot
 time to observe. Speech, reactions, and explicit requests bypass this idle-only
-pause. Idle actions alternate families, with a body gesture every four to six
-idle actions and smaller gaze, neck, or expression changes in between. They never
-select continuous walking or generate speech notifications.
+pause. At least three display-only idle actions precede each physical idle action,
+including the first one. Expressions can persist across consecutive turns when
+the mood is unchanged; physical movement is optional, never forced by a quota.
+Curiosity, thought, warmth, surprise, and the neutral face convey reactions without
+moving the neck. Idle display changes also update reaction deduplication so a
+later conversation reaction is not suppressed because of an obsolete face state.
+Idle actions never select continuous walking or generate speech notifications.
 
-A `yield` decision enters quiet listening and appends a listen-only instruction
-to the Live session. Appended instructions are not withdrawn, so every exit
-from quiet listening appends an explicit release: an `answer` decision, a local
-match of the robot's name (including common speech recognition misspellings)
-at least five seconds after the quiet request, `resume_idle`, and the operator
-`i` command. A `yield` within 20 seconds of a release is ignored, because the
-original request remains in the transcript the Decisions trigger reads.
+A fresh human-input `yield` decision enters quiet listening and appends a
+listen-only instruction to Live. Every exit appends an explicit release:
+`answer` for a direct address or request to speak, `resume_idle`, or operator `i`.
+Names are interpreted in context by Decisions, not matched locally to release
+quiet mode. Participation questions classify only the latest human speech,
+not a standing listening state or a request already handled earlier.
+
+A compact state notice is appended to native Decisions on listening transitions
+and quiet reconnection. Source-event ordering rejects results that predate a
+transition; new quiet requests have no timed lockout. Reconnection discards old
+source events but preserves quiet state and motion cooldowns. Neither assistant
+transcript events nor stale results can change quiet state.
+
+`quiet_entered`, `quiet_released`, and `quiet_restored` log state changes.
+`steering_sent` and `steering_accepted` correlate instruction delivery by event ID.
+Acceptance does not prove speech: `quiet_reply_started` marks the first subsequent
+assistant transcript fragment, while audio diagnostics and supervised listening
+are still needed to establish audible, meaningful recovery.
 
 ## Motion and stopping
 

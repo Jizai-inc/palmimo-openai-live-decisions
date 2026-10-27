@@ -17,7 +17,14 @@ from .policy import Reaction
 from .vision import CameraFrames
 from .walking import make_walking_tool
 
-FACES = {"neutral": "IDLE", "happy": "HAPPY", "sad": "SAD", "thinking": "THINKING", "surprised": "SURPRISE"}
+FACES = {
+    "neutral": "IDLE",
+    "happy": "HAPPY",
+    "sad": "SAD",
+    "thinking": "THINKING",
+    "surprised": "SURPRISE",
+    "curious": "CURIOUS",
+}
 
 
 class Robot:
@@ -100,7 +107,7 @@ class Robot:
     async def action(self, name: str, started: Callable[[], Awaitable[None]] | None = None) -> str:
         """Run requested motions while preserving SDK stop/neutral behavior."""
         if not self.motion_enabled:
-            return "音声のみのモードなので、身体の動作は実行していません。"
+            return "Audio-only mode: no physical action was executed."
         if name not in ACTIONS:
             return "No supported motion was requested."
         if name in CONTINUOUS_ACTIONS:
@@ -132,9 +139,9 @@ class Robot:
     async def stop(self) -> str:
         """Return legs and gaze to the SDK's neutral stance after the previous task settles."""
         if not self.motion_enabled:
-            return "音声のみのモードなので、身体の動作は実行していません。"
+            return "Audio-only mode: no physical action was executed."
         await self.call("stop", {})
-        return "動作を停止しました。脚と首を基本姿勢に戻し、その姿勢で待機しています。"
+        return "Motion stopped. Legs and neck returned to the startup stance and are holding it."
 
     async def close(self) -> None:
         """Park smoothly and release all device handles."""

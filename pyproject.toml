@@ -17,6 +17,10 @@ dependencies = [
     "websockets>=17.1,<18",
 ]
 
+[project.optional-dependencies]
+# Keep existing launchers using --extra robot compatible with the default install.
+robot = []
+
 [project.scripts]
 palmimo-openai-live-decisions = "palmimo_openai_live_decisions.cli:main"
 

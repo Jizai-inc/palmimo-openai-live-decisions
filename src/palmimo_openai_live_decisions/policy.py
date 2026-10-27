@@ -1,6 +1,5 @@
 """Reject stale decisions and keep reactions from competing with conversation."""
 
-import re
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
@@ -17,13 +16,6 @@ QUIET_RESTORED = (
     "The connection recovered during quiet listening. Keep listening without speech or backchannels "
     "until directly addressed. Keep the conversation language."
 )
-# A name can be mentioned rather than addressed, so this release does not prompt an answer.
-NAME_RELEASE = (
-    "Quiet listening has ended because your name was heard. If that was addressed to you, answer briefly; "
-    "if people were only talking about you, keep listening until addressed. Keep the conversation language."
-)
-# Speech recognition often bends the name (アルミモ, パルビーモ, カルビーモ); match those spellings too.
-NAME_PATTERN = re.compile(r"[パバアカ]ル[ミビ]ー?モ|パルミ|palmimo", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -62,8 +54,9 @@ class Conversation:
         return [
             {
                 "role": "developer",
-                "content": "接続が復旧しました。以下は直前の会話の一部です。聞こえていなかった内容や"
-                "誰が話したかを推測しないでください。過去の動作を再実行しないでください。",
+                "content": "The connection has recovered. Below is part of the preceding conversation. "
+                "Continue its language and any explicit language preference. "
+                "Do not invent missed speech or speaker identities, and do not repeat past actions.",
             },
             *[dict(p) for p in self.parts],
         ]
@@ -79,37 +72,26 @@ class ReactionPolicy:
         self.applied: dict[str, int] = {}
         self.sequence = 0
         self.last_gesture = float("-inf")
+        self.last_neck_motion = float("-inf")
         self.last_clap = float("-inf")
         self.last_contribution = float("-inf")
         self.last_expression: str | None = None
         self.quiet = False
-        self.quiet_since = float("-inf")
-        self.released_at = float("-inf")
-        self.quiet_heard = ""
+        self.listening_sequence = 0
 
-    def release(self) -> str | None:
-        """Lift quiet listening and return the steering that tells the voice model so."""
+    def release(self, sequence: int | None = None) -> str | None:
+        """Lift quiet listening and invalidate decisions from before this request."""
+        self.listening_sequence = self.sequence if sequence is None else sequence
         if not self.quiet:
             return None
         self.quiet = False
-        self.released_at = self.clock()
-        self.quiet_heard = ""
         return QUIET_RELEASE
 
-    def heard(self, text: str) -> str | None:
-        """Treat the robot's name, heard after the quiet request itself, as being addressed."""
-        if not self.quiet:
-            return None
-        heard = self.quiet_heard + text
-        if self.clock() - self.quiet_since < self.settings.quiet_name_grace:
-            # Keep only a name head that a fragment boundary could split, never a whole name.
-            self.quiet_heard = heard[-4:]
-            return None
-        self.quiet_heard = heard[-32:]
-        if not NAME_PATTERN.search(heard):
-            return None
-        self.release()
-        return NAME_RELEASE
+    def reconnect(self) -> None:
+        """Keep listening/motion state but discard source events from the old connection."""
+        self.sources.clear()
+        self.applied.clear()
+        self.listening_sequence = self.sequence
 
     def observe(self, event: dict[str, Any]) -> None:
         """Remember source events so late results cannot move the robot."""
@@ -146,25 +128,28 @@ class ReactionPolicy:
         }
         instruction = None
         participation = answers.get("participation")
-        was_quiet = self.quiet
-        release = self.release() if participation == "answer" else None
-        # Transcript context keeps an earlier quiet request visible; do not re-enter right after a release.
-        if participation == "yield" and self.clock() - self.released_at < self.settings.quiet_rearm_seconds:
+        # Only fresh human input can change listening state, never assistant speech
+        # or a decision that predates the latest explicit/operator transition.
+        if direction != "session.input_transcript.delta" or sequence <= self.listening_sequence:
             participation = None
         if participation == "yield" and not self.quiet:
             self.quiet = True
-            instruction = "いまは発言と相槌を控えて聞いてください。再び直接話しかけられたら応答してください。"
+            self.listening_sequence = sequence
+            instruction = "Listen without speaking or backchannels until directly addressed again. Keep the conversation language."
         elif participation == "answer":
-            self.quiet = False
+            instruction = self.release(sequence)
         elif (
             participation == "contribute"
             and not self.quiet
             and self.clock() - self.last_contribution >= self.settings.contribution_cooldown
         ):
             self.last_contribution = self.clock()
-            instruction = "会話に参加できそうです。まだ人が話していれば待ち、区切りで役立つ意見があれば一言だけ。直前に答えていれば繰り返さないでください。"
+            instruction = (
+                "There may be a useful opening to contribute. Wait while people are speaking, then offer "
+                "one brief relevant thought in the conversation language if helpful. Do not repeat a recent answer."
+            )
         expression = answers.get("expression")
-        if expression not in {"neutral", "happy", "sad", "thinking", "surprised"}:
+        if expression not in {"neutral", "happy", "sad", "thinking", "surprised", "curious"}:
             expression = None
         if expression == self.last_expression:
             expression = None
@@ -177,15 +162,24 @@ class ReactionPolicy:
             gesture = None
         if gesture == "clap" and self.clock() - self.last_clap < self.settings.clap_cooldown:
             gesture = None
-        if self.quiet and not was_quiet:
-            self.quiet_since = self.clock()
-            self.quiet_heard = ""
-        return Reaction(expression, gesture, instruction or release)
+        if gesture in {"nod", "shake"} and not self.neck_available():
+            gesture = None
+        return Reaction(expression, gesture, instruction)
+
+    def neck_available(self) -> bool:
+        """Share one interval between transcript gestures and autonomous gaze."""
+        return self.clock() - self.last_neck_motion >= self.settings.neck_cooldown
+
+    def applied_neck_motion(self) -> None:
+        """Reserve the next interval when a neck action actually starts or is accepted."""
+        self.last_neck_motion = self.clock()
 
     def applied_motion(self, reaction: Reaction) -> None:
         """Consume cooldown only after an action is accepted by the scheduler."""
         if reaction.gesture:
             self.last_gesture = self.clock()
+        if reaction.gesture in {"nod", "shake"}:
+            self.applied_neck_motion()
         if reaction.gesture == "clap":
             self.last_clap = self.clock()
         if reaction.expression:
