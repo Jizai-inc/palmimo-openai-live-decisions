@@ -37,6 +37,25 @@ moving the neck. Idle display changes also update reaction deduplication so a
 later conversation reaction is not suppressed because of an obsolete face state.
 Idle actions never select continuous walking or generate speech notifications.
 
+A fresh human-input `yield` decision enters quiet listening and appends a
+listen-only instruction to Live. Every exit appends an explicit release:
+`answer` for a direct address or request to speak, `resume_idle`, or operator `i`.
+Names are interpreted in context by Decisions, not matched locally to release
+quiet mode. Participation questions classify only the latest human speech,
+not a standing listening state or a request already handled earlier.
+
+A compact state notice is appended to native Decisions on listening transitions
+and quiet reconnection. Source-event ordering rejects results that predate a
+transition; new quiet requests have no timed lockout. Reconnection discards old
+source events but preserves quiet state and motion cooldowns. Neither assistant
+transcript events nor stale results can change quiet state.
+
+`quiet_entered`, `quiet_released`, and `quiet_restored` log state changes.
+`steering_sent` and `steering_accepted` correlate instruction delivery by event ID.
+Acceptance does not prove speech: `quiet_reply_started` marks the first subsequent
+assistant transcript fragment, while audio diagnostics and supervised listening
+are still needed to establish audible, meaningful recovery.
+
 ## Motion and stopping
 
 Explicit requests preempt spontaneous gestures through SDK cancellation. A
@@ -69,7 +88,9 @@ without sending a completion notification to the voice model.
 ## Recovery and boundaries
 
 Recovery keeps at most the latest 12,000 transcript characters in memory and
-preserves the mute and motion-hold state. It does not replay actions or recreate
+preserves the mute and motion-hold state. The reaction policy also survives, and a
+new connection in quiet listening receives the listen-only instruction again,
+because appended instructions do not carry over. It does not replay actions or recreate
 the exact previous audio state. Repeated connection failures park and stop;
 configuration and device failures are fatal.
 

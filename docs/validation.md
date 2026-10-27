@@ -34,7 +34,19 @@ API call or a simulated test.
    reconnect preserves the recent language preference without replaying motion.
    Japanese stop phrases and English `stop` use a direct transcript path; other
    languages rely on model delegation, so assess their latency separately.
-10. End with `q`, wait for `stopped`, and independently verify device release,
+10. In both Japanese and English, ask Palmimo to just listen, converse with another
+   person for 20–30 seconds, then ask "can you hear me?" / "聞こえてる？" without
+   its name. Confirm a meaningful audible answer, then immediately ask it to be
+   quiet again. Repeat with "please talk" and "what do you think?". While quiet,
+   mention Palmimo to someone else and confirm it stays quiet; then address it
+   directly by name. Test `i` and the spoken idle-resume command as recovery paths.
+   Reconnect while quiet and confirm it remains quiet until a new direct request.
+   Check quiet transitions, steering acceptance, and subsequent assistant text
+   against what was heard. An acknowledgment event alone is not a successful reply.
+11. Install the app through Portal using the PR branch or a release containing
+   this manifest. Set the API key locally, start with the selected voice, then
+   stop through Portal and verify graceful parking and resource release.
+12. End with `q`, wait for `stopped`, and independently verify device release,
    21 responding servos, no hardware errors, and torque off.
 
 Record the app commit, SDK and helper versions, hardware/audio setup, API models,

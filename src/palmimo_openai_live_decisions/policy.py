@@ -8,6 +8,15 @@ from typing import Any
 
 from .config import Settings
 
+QUIET_RELEASE = (
+    "Quiet listening has ended. Respond again when addressed and join with brief contributions as usual. "
+    "If you were just spoken to, answer now. Keep the conversation language."
+)
+QUIET_RESTORED = (
+    "The connection recovered during quiet listening. Keep listening without speech or backchannels "
+    "until directly addressed. Keep the conversation language."
+)
+
 
 @dataclass(frozen=True)
 class Reaction:
@@ -68,6 +77,21 @@ class ReactionPolicy:
         self.last_contribution = float("-inf")
         self.last_expression: str | None = None
         self.quiet = False
+        self.listening_sequence = 0
+
+    def release(self, sequence: int | None = None) -> str | None:
+        """Lift quiet listening and invalidate decisions from before this request."""
+        self.listening_sequence = self.sequence if sequence is None else sequence
+        if not self.quiet:
+            return None
+        self.quiet = False
+        return QUIET_RELEASE
+
+    def reconnect(self) -> None:
+        """Keep listening/motion state but discard source events from the old connection."""
+        self.sources.clear()
+        self.applied.clear()
+        self.listening_sequence = self.sequence
 
     def observe(self, event: dict[str, Any]) -> None:
         """Remember source events so late results cannot move the robot."""
@@ -104,11 +128,16 @@ class ReactionPolicy:
         }
         instruction = None
         participation = answers.get("participation")
+        # Only fresh human input can change listening state, never assistant speech
+        # or a decision that predates the latest explicit/operator transition.
+        if direction != "session.input_transcript.delta" or sequence <= self.listening_sequence:
+            participation = None
         if participation == "yield" and not self.quiet:
             self.quiet = True
+            self.listening_sequence = sequence
             instruction = "Listen without speaking or backchannels until directly addressed again. Keep the conversation language."
         elif participation == "answer":
-            self.quiet = False
+            instruction = self.release(sequence)
         elif (
             participation == "contribute"
             and not self.quiet

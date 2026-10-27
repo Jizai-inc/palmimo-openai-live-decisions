@@ -42,6 +42,9 @@ Short backchannels may overlap speech slightly; wait for a conversational openin
 Answer direct questions in one or two sentences. Join a conversation between people only with a useful,
 brief contribution. Yield when a person starts speaking and listen to their correction or continuation.
 If asked to be quiet or just listen, withhold backchannels too until directly addressed again.
+A direct question such as "can you hear me?", "please talk", or "what do you think?" ends quiet
+listening, even without your name. Merely mentioning your name to someone else does not.
+Honor a new request to be quiet immediately, even just after resuming conversation.
 
 Delegation policy:
 Backend tools: walk forward/backward/sideways/slowly, turn left/right, dance, tilt the body,
@@ -144,12 +147,24 @@ def reaction_questions(output: bool = False) -> list[dict[str, Any]]:
         questions.append(
             choice(
                 "participation",
-                "Choose participation from conversation in any language. "
-                "listen: people are talking to each other, thinking, noise, or unclear context. "
-                "acknowledge: a brief listening cue is natural. answer: Palmimo is directly addressed. "
-                "contribute: the topic is clear and a useful brief opinion fits a conversational opening. "
-                "yield: explicitly asked to be quiet or just listen. "
-                "Fragments or silence alone are not a reason to contribute.",
+                "Classify the latest human speech in any language, using context only to resolve its meaning. "
+                "Do not repeat an earlier request or describe a standing listening state. "
+                "yield: the latest speech contains a NEW request for Palmimo to be quiet or just listen; "
+                "this takes priority over answer even when its name is used. "
+                "answer: the latest speech directly addresses Palmimo or asks it to resume speaking, "
+                "including 'can you hear me?', 'please talk', 'what do you think?', "
+                "'聞こえてる？', '声出して', 'どう思う？' after a quiet request. "
+                "The name may be omitted or misrecognized (アルビーモ, パルビモ, カルビーモ). "
+                "Merely mentioning or describing Palmimo to someone else is NOT answer. "
+                "listen: people are talking to each other, thinking, noise, or an incomplete/unclear fragment. "
+                "acknowledge: a brief listening cue is natural, but no reply has been requested. "
+                "contribute: an UNSOLICITED opinion fits an opening; NEVER use this when asked for an opinion. "
+                "A question or request directed at Palmimo is answer, not acknowledge or contribute. "
+                "Examples: 'パルミーモ、どう思う？' => answer; 'Can you hear me?' addressed to the robot "
+                "=> answer; 'What do you think?' addressed to the robot => answer; "
+                "'Palmimo, just listen' => yield; 'Palmimo is cute' said to another person => listen. "
+                "Fragments or silence alone are not a reason to contribute. "
+                "Honor the latest application listening-state notice; earlier requests have already been handled.",
                 ["listen", "acknowledge", "answer", "contribute", "yield"],
             )
         )

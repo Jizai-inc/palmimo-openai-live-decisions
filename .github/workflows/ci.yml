@@ -62,12 +62,12 @@ jobs:
           version: '0.13.5'
           python-version: '3.12'
       - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libgl1 libglib2.0-0
-      - run: uv sync --frozen --extra robot --group dev
+      - run: uv sync --frozen --group dev
       - name: Import hardware adapters without opening devices
         run: >-
-          uv run --frozen --extra robot python -c
+          uv run --frozen python -c
           "from palmimo_openai_live_decisions.robot import build_robot;
           from palmimo_companion_agent.core.tools import make_look_at_face_tool;
           from palmimo_companion_agent.core.vision import FaceLocator, VisionWatch, WaveDetector;
           from palmimo_sdk import DynamixelDriver, EchoCanceller, FaceDisplay, HeadCamera, MicStream"
-      - run: uv run --frozen --extra robot pytest -q
+      - run: uv run --frozen pytest -q

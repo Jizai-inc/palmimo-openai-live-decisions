@@ -82,7 +82,7 @@ Clone and install on the configured robot host:
 ```bash
 git clone https://github.com/Jizai-inc/palmimo-openai-live-decisions.git
 cd palmimo-openai-live-decisions
-uv sync --frozen --extra robot
+uv sync --frozen
 cp .env.example .env
 chmod 600 .env
 ```
@@ -93,7 +93,7 @@ Never commit it, include it in an issue, or place it in a browser client.
 Check API access before opening any devices:
 
 ```bash
-uv run --frozen --extra robot palmimo-openai-live-decisions check-api --env-file .env
+uv run --frozen palmimo-openai-live-decisions check-api --env-file .env
 ```
 
 This performs real, potentially billable API requests. It does not open the
@@ -102,7 +102,7 @@ microphone, speaker, camera, display, or servo bus.
 Stop every other Palmimo app. First test the microphone and speaker:
 
 ```bash
-uv run --frozen --extra robot palmimo-openai-live-decisions run --env-file .env \
+uv run --frozen palmimo-openai-live-decisions run --env-file .env \
   --audio-only --seconds 60
 ```
 
@@ -113,7 +113,7 @@ Support the robot with its feet clear for initial tests and supervise it.
 Then run in an interactive terminal:
 
 ```bash
-uv run --frozen --extra robot palmimo-openai-live-decisions run --env-file .env
+uv run --frozen palmimo-openai-live-decisions run --env-file .env
 ```
 
 If needed, select the serial device with `--port /dev/ttyACM0`. When controlling
@@ -125,6 +125,15 @@ disconnecting power or launching another app. Never use a forced process kill
 as the normal stop procedure. After a hardware session, verify device release
 and all 21 servos' torque-off state using the SDK diagnostics.
 
+### Install from Palmimo Portal
+
+The repository root ships a [`palmimo.toml`](palmimo.toml) manifest, so Palmimo
+Portal can add this repository as an app by its GitHub URL. Set `OPENAI_API_KEY`
+in the app's environment settings in Portal; Portal does not read `.env`.
+The `voice` and `no_idle` parameters map to `--voice` and `--no-idle`. A Portal
+start has no interactive terminal, so stop it from Portal rather than with `q`.
+The hardware checks above apply to the first Portal start as well.
+
 ## Stop and operator controls
 
 | Input | Effect |
@@ -133,7 +142,7 @@ and all 21 servos' torque-off state using the SDK diagnostics.
 | Say `自由に動いて` / `You can move freely again`, or request a new motion | Resume movement |
 | `s` + Enter | Show connection, audio diagnostics, and motion state |
 | `x` + Enter | Return to stance and hold motion while keeping the conversation open |
-| `i` + Enter | Release the motion hold and resume idle gestures |
+| `i` + Enter | Release quiet listening and the motion hold; resume idle gestures |
 | `m` + Enter | Hold motion and mute input; already generated speech may continue |
 | `l` + Enter | Resume input |
 | `q` + Enter | Close Live, settle motion, park, release devices, and exit |
@@ -146,6 +155,18 @@ A spoken stop is cloud-dependent and is not a physical emergency stop.
 Keep a local operator stop available. Connection loss holds motion; reconnecting
 does not replay an old action. Microphone and server-event watchdogs stop
 continuous walking when their streams stall.
+
+Asking Palmimo to be quiet or just listen suppresses speech, backchannels, and
+spontaneous gestures until it is directly addressed again. A direct question
+such as "can you hear me?", "please talk", or "what do you think?" can resume
+conversation without saying its name. Merely mentioning Palmimo to someone else
+does not release quiet listening. Recognition is model-driven in every language.
+
+Each release explicitly tells the voice model it may speak again and updates
+Decisions with the current listening state. A new quiet request can take effect
+immediately; there is no timed lockout. Late results from before a release cannot
+restore an old quiet request. Quiet listening survives reconnection. The spoken
+idle-resume command or `i` + Enter is also an operator recovery path.
 
 ## Configuration
 
@@ -187,7 +208,7 @@ Live sessions are billed by duration; Decisions and vision requests incur
 additional usage. Billing continues while an open session is quiet. Check
 [OpenAI pricing](https://developers.openai.com/api/docs/pricing) and use explicit
 test durations and project usage controls. This app has no built-in spending cap.
-The Decisions API is currently in public beta, so API compatibility may change.
+API compatibility may change; validate against the configured models before a demo.
 
 ## Development and validation
 

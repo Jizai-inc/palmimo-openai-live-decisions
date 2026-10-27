@@ -73,6 +73,7 @@ async def test_reconnect_keeps_history_and_mute_without_reopening_robot(monkeypa
         if len(sessions) == 1:
             session.conversation.append("user", "Remember this conversation.")
             session.control.muted = True
+            session.policy.quiet = True
             raise ConnectionError("simulated network loss")
         stop.set()
 
@@ -89,6 +90,7 @@ async def test_reconnect_keeps_history_and_mute_without_reopening_robot(monkeypa
     await runtime.run(Settings(), "test", robot, EventLog(), stop, asyncio.Queue())  # type: ignore[arg-type]
     assert robot.connects == 1 and robot.closes == 1
     assert len(sessions) == 2 and sessions[1].control.muted and sessions[1].control.motion_paused
+    assert sessions[1].policy is sessions[0].policy and sessions[1].policy.quiet
     assert any(part["content"] == "Remember this conversation." for part in histories[1])
     assert "Motion was stopped" in histories[1][-1]["content"]
     assert all(player.closed for player in players)
