@@ -168,6 +168,15 @@ immediately; there is no timed lockout. Late results from before a release canno
 restore an old quiet request. Quiet listening survives reconnection. The spoken
 idle-resume command or `i` + Enter is also an operator recovery path.
 
+An isolated `decision_failed` skips one evaluation while conversation continues.
+The app checks that the session still responds without making it speak. Repeated
+failures, an unresponsive session, or a lost connection trigger reconnection with
+recent conversation and listening state preserved. Movement stops and stays held
+until a new request. Repeated connection failures slow retries rather than leave
+the app permanently stopped. Authentication, configuration, device faults, and
+safety-related session closure still stop the app; manual stop takes priority.
+See [recovery and diagnostics](docs/architecture.md#recovery-and-boundaries).
+
 ## Configuration
 
 Use `uv run palmimo-openai-live-decisions --help` for the complete CLI.

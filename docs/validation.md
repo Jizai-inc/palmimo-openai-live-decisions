@@ -27,6 +27,14 @@ API call or a simulated test.
    request applause. Assess actual behavior rather than event counts alone.
 8. Under supervision with the local stop available, test connection loss. Check
    that motion holds and an old command is not replayed on reconnection.
+   Inject one synthetic `decision_failed` at the client event boundary: verify
+   audio continues, the health probe is acknowledged, and the session ID stays
+   unchanged. Inject three errors within thirty seconds: verify a new session,
+   preserved conversational language and quiet state, and no replayed motion.
+   Test missing probe acknowledgement, prolonged outage, and stopping during the
+   retry delay with the local WebSocket tests before hardware. Synthetic events
+   verify client recovery, not the root cause or recoverability of a real API
+   failure. Record naturally occurring failures separately.
 9. Repeat conversation, action announcements, stop, resume, and scene questions
    in each target language. Switch languages mid-session, explicitly request a
    language, and check that a quoted foreign phrase does not cause a switch.

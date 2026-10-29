@@ -103,6 +103,10 @@ class Settings:
     decision_ttl: float = 3.0
     confidence: float = 0.65
     reconnect_attempts: int = 6
+    reconnect_cooldown: float = 30.0
+    decision_failure_limit: int = 3
+    decision_failure_window: float = 30.0
+    decision_probe_timeout: float = 10.0
     stream_stall_seconds: float = 2.0
     action_ack_timeout: float = 5.0
     action_lead_seconds: float = 0.5

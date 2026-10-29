@@ -166,8 +166,11 @@ async def microphone_frames(mic: Any) -> Any:
     """Keep the SDK's existing echo-cancelled 16 kHz capture continuous."""
     import asyncio
 
-    with mic.stream() as subscription:
-        while True:
-            chunk = await asyncio.to_thread(subscription.get, 0.2)
-            if chunk is not None:
-                yield chunk.astype("<i2", copy=False).tobytes()
+    try:
+        with mic.stream() as subscription:
+            while True:
+                chunk = await asyncio.to_thread(subscription.get, 0.2)
+                if chunk is not None:
+                    yield chunk.astype("<i2", copy=False).tobytes()
+    except OSError as exc:
+        raise RuntimeError("Microphone capture device failed") from exc

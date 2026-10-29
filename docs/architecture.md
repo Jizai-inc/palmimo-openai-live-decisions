@@ -91,8 +91,36 @@ Recovery keeps at most the latest 12,000 transcript characters in memory and
 preserves the mute and motion-hold state. The reaction policy also survives, and a
 new connection in quiet listening receives the listen-only instruction again,
 because appended instructions do not carry over. It does not replay actions or recreate
-the exact previous audio state. Repeated connection failures park and stop;
-configuration and device failures are fatal.
+the exact previous audio state.
+
+A single `decision_failed` drops that evaluation while audio and conversation
+continue in the same session. Failed trigger/delegation IDs are remembered so a
+late result cannot execute the failed action. The app sends an empty
+`session.update` as a health probe and requires its matching `session.updated`
+within ten seconds. This changes no settings and does not ask the model to speak:
+quiet listening is not mistaken for a broken connection. Three failed evaluations
+in thirty seconds, a missing probe acknowledgement, or a lost/expired session
+require a replacement session. Transport keepalives also detect a lost socket
+independently of speech. This cannot prove every upstream subsystem is healthy;
+it confirms a responsive session and subsequent successful decisions.
+
+Before reconnecting, producers and motions settle, the robot returns to its
+neutral stance, and playback is discarded. Movement stays held until a fresh
+request; conversation resumes with recent history and language. Six quick retries
+use capped exponential delays, then further attempts wait thirty seconds each
+until connectivity returns or the operator stops the app. Configuration,
+authentication, protocol/policy, safety closure, and device failures are not
+retried. Explicit remote hangup and local stop end the app. `q` and SIGTERM work
+during a reconnect delay.
+
+Diagnostics include session IDs, decision IDs and source associations when
+available, API error category and parameter, a question-configuration hash,
+session closure reason, health-probe latency, retry delays, and recovery latency.
+Periodic session-health records report event counts and stream ages, without
+audio bytes or complete protocol payloads. Existing transcript logging remains
+private; never commit it or share it without review. An error can refer to a
+trigger that never produced a source event, so its source association may be
+unknown rather than guessed.
 
 This app does not authenticate nearby people or associate a face with a speaker.
 It has no web server, remote command listener, persistent personal memory, or

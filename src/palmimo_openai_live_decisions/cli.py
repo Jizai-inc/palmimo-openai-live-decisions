@@ -73,7 +73,11 @@ async def operate(settings: Settings, key: str, log: EventLog) -> None:
     def read_command() -> None:
         text = sys.stdin.readline()
         if text:
-            commands.put_nowait(text.strip().lower())
+            command = text.strip().lower()
+            if command == "q":
+                stop.set()
+            else:
+                commands.put_nowait(command)
         else:
             loop.remove_reader(sys.stdin.fileno())
 

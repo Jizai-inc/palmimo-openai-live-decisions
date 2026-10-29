@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import random
 import time
@@ -20,12 +21,9 @@ from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
 from .idle import IDLE_ACTIONS, IDLE_PAUSE_SECONDS, IdleDecider
 from .policy import QUIET_RESTORED, Conversation, Reaction, ReactionPolicy
+from .recovery import DecisionRecovery, ProtocolError, RetryableSessionError, bounded, session_closed_error
 from .robot import FACES, Robot
 from .vision import SceneVision
-
-
-class ProtocolError(RuntimeError):
-    """An API configuration error must not start a hardware retry loop."""
 
 
 @dataclass
@@ -79,6 +77,8 @@ class Session:
         self.scene_time = 0.0
         self.pending_steering: dict[str, str] = {}
         self.awaiting_quiet_reply = False
+        self.recovery = DecisionRecovery(settings, log)
+        self.health_probe: tuple[str, float] | None = None
         self.send: Callable[[dict[str, Any]], Awaitable[None]]
 
     def schedule(self, work: Callable[[], Coroutine[Any, Any, None]], *, origin: str = "reaction") -> bool:
@@ -105,7 +105,10 @@ class Session:
     def check_motion(self) -> None:
         """Surface robot errors to the owning runtime."""
         if self.motion is not None and self.motion.done():
-            self.motion.result()
+            try:
+                self.motion.result()
+            except OSError as exc:
+                raise RuntimeError("Motion device failed") from exc
             self.motion = None
 
     def replace_motion(self, work: Callable[[], Coroutine[Any, Any, None]], *, origin: str = "explicit") -> None:
@@ -201,6 +204,8 @@ class Session:
     def check_streams(self) -> None:
         """Stop when capture fails, or walking loses its remote voice control path."""
         now = time.monotonic()
+        if self.health_probe is not None and now - self.health_probe[1] > self.settings.decision_probe_timeout:
+            raise RetryableSessionError("Live session did not acknowledge its health probe")
         if now - self.last_microphone_frame > self.settings.stream_stall_seconds:
             raise RuntimeError("Microphone capture stalled")
         if self.robot.walking and now - self.last_server_event > self.settings.stream_stall_seconds:
@@ -347,10 +352,16 @@ class Session:
             )
         elif kind == "decision.event":
             self.decision_events += 1
+            if not self.recovery.observe_decision(event):
+                return
             inner = event.get("event", {})
             if inner.get("type") == "decision.completed":
                 self.log.write(
                     "decision",
+                    session_id=self.recovery.session_id,
+                    trigger_id=bounded(event.get("trigger_id")),
+                    source_event_id=bounded(event.get("source_event_id")),
+                    delegation_id=bounded(event.get("delegation_id")),
                     delegated=bool(event.get("delegation_id")),
                     source=event.get("source_event_type"),
                     answers=[
@@ -421,11 +432,27 @@ class Session:
             self.log.write("microphone", muted=False)
         elif kind == "session.closed":
             self.final_usage = True
-            self.log.write("session_closed", usage=event.get("usage"))
+            self.log.write(
+                "session_closed",
+                session_id=self.recovery.session_id,
+                reason=bounded(event.get("reason")),
+                usage=event.get("usage"),
+            )
         elif kind == "error":
-            error = event.get("error", {})
-            self.log.write("api_error", code=error.get("code"), message=error.get("message"))
-            raise ProtocolError(str(error.get("code", "unknown_api_error")))
+            self.recovery.handle_error(event)
+            if self.health_probe is None:
+                identity = f"health_{uuid.uuid4().hex}"
+                self.health_probe = (identity, time.monotonic())
+                self.log.write("session_probe_started", session_id=self.recovery.session_id, event_id=identity)
+                await self.send({"type": "session.update", "event_id": identity, "session": {}})
+        elif kind == "session.updated":
+            if self.health_probe is not None and event.get("client_event_id") == self.health_probe[0]:
+                self.log.write(
+                    "session_probe_succeeded",
+                    session_id=self.recovery.session_id,
+                    elapsed_ms=round((time.monotonic() - self.health_probe[1]) * 1000),
+                )
+                self.health_probe = None
 
     async def delegated(self, event: dict[str, Any]) -> None:
         """Execute each explicit request at most once within a session."""
@@ -598,7 +625,7 @@ class Session:
             self.schedule(perform, origin="idle")
 
 
-async def start_connection(ws: Any, settings: Settings, history: list[dict[str, str]]) -> None:
+async def start_connection(ws: Any, settings: Settings, history: list[dict[str, str]]) -> dict[str, Any]:
     """Require an accepted session before touching peripherals."""
     await ws.send(
         json.dumps({"type": "session.start", "session": session_config(settings, history)}, ensure_ascii=False)
@@ -607,7 +634,8 @@ async def start_connection(ws: Any, settings: Settings, history: list[dict[str, 
         while True:
             event = json.loads(await ws.recv())
             if event.get("type") == "session.started":
-                return
+                snapshot = event.get("session")
+                return snapshot if isinstance(snapshot, dict) else {}
             if event.get("type") == "error":
                 error = event.get("error", {})
                 raise ProtocolError(f"{error.get('code')}: {error.get('message')}")
@@ -615,7 +643,10 @@ async def start_connection(ws: Any, settings: Settings, history: list[dict[str, 
 
 async def close_connection(ws: Any, session: Session, player: Any) -> None:
     """Wait briefly for final usage while discarding closing speech."""
+    if session.final_usage:
+        return
     try:
+        session.log.write("session_close_requested", session_id=session.recovery.session_id)
         await ws.send(json.dumps({"type": "session.close"}))
         async with asyncio.timeout(5):
             while not session.final_usage:
@@ -646,7 +677,9 @@ async def run_connection(
             event = json.loads(raw)
             await session.dispatch(event, player)
             if event.get("type") == "session.closed":
-                raise ConnectionError("Live session ended")
+                session_closed_error(bounded(event.get("reason")))
+                stop.set()
+                return
         raise ConnectionError("Live connection ended")
 
     async def microphone() -> None:
@@ -659,6 +692,7 @@ async def run_connection(
     async def supervise() -> None:
         last_gaze = time.monotonic()
         last_audio_log = last_gaze
+        last_health_log = last_gaze
         while True:
             session.check_motion()
             session.check_streams()
@@ -667,6 +701,20 @@ async def run_connection(
             if time.monotonic() - last_audio_log >= 5:
                 session.log.write("audio", **player.stats())
                 last_audio_log = time.monotonic()
+            if time.monotonic() - last_health_log >= 30:
+                now = time.monotonic()
+                session.log.write(
+                    "session_health",
+                    session_id=session.recovery.session_id,
+                    events=session.events,
+                    decisions=session.decision_events,
+                    last_server_event_age=round(now - session.last_server_event, 2),
+                    last_microphone_frame_age=round(now - session.last_microphone_frame, 2),
+                    quiet=session.policy.quiet,
+                    muted=session.control.muted,
+                    motion_paused=session.control.motion_paused,
+                )
+                last_health_log = now
             if (
                 session.idle is None
                 and session.robot.face_tracking
@@ -733,19 +781,23 @@ async def run_connection(
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await session.settle()
+        try:
+            await session.settle()
+        except OSError as exc:
+            raise RuntimeError("Device cleanup failed") from exc
 
 
 async def run(
     settings: Settings, key: str, robot: Robot, log: EventLog, stop: asyncio.Event, commands: asyncio.Queue[str]
 ) -> None:
-    """Run until stopped, recovering boundedly from network failures only."""
+    """Keep conversation alive through transient failures without replaying motion."""
     conversation = Conversation()
     policy = ReactionPolicy(settings)
     control = InputControl()
     failures = 0
     deadline = time.monotonic() + settings.seconds if settings.seconds else float("inf")
     connected = False
+    reconnect_started: float | None = None
     frames = getattr(robot, "camera_frames", None)
     vision = SceneVision(frames, key) if frames is not None else None
     idle = IdleDecider(key) if settings.idle_enabled and not settings.audio_only else None
@@ -764,7 +816,21 @@ async def run(
                     ping_interval=10,
                     ping_timeout=15,
                 ) as ws:
-                    await start_connection(ws, settings, conversation.history())
+                    snapshot = await start_connection(ws, settings, conversation.history()) or {}
+                    session.recovery.session_id = bounded(snapshot.get("id"))
+                    configuration = session_config(settings, [])
+                    decisions = {key: configuration[key] for key in ("delegation", "triggers")}
+                    log.write(
+                        "session_started",
+                        session_id=session.recovery.session_id,
+                        expires_at=snapshot.get("expires_at"),
+                        decision_config_hash=hashlib.sha256(json.dumps(decisions, sort_keys=True).encode()).hexdigest()[
+                            :16
+                        ],
+                    )
+                    if stop.is_set():
+                        await close_connection(ws, session, NullPlayback())
+                        break
                     try:
                         if not connected:
                             await robot.connect()
@@ -774,11 +840,23 @@ async def run(
                         raise RuntimeError("Device startup failed") from exc
                     log.write(
                         "ready",
+                        session_id=session.recovery.session_id,
                         model="gpt-live-1",
                         audio_only=settings.audio_only,
                         microphone=settings.mic_device,
                         speaker=settings.speaker_device,
                     )
+                    if reconnect_started is not None:
+                        log.write(
+                            "reconnected",
+                            session_id=session.recovery.session_id,
+                            elapsed_ms=round((time.monotonic() - reconnect_started) * 1000),
+                            quiet=policy.quiet,
+                            muted=control.muted,
+                            motion_paused=control.motion_paused,
+                        )
+                        reconnect_started = None
+                    started = time.monotonic()
                     try:
                         remaining = deadline - time.monotonic()
                         if settings.seconds:
@@ -791,22 +869,48 @@ async def run(
                     finally:
                         await close_connection(ws, session, player)
             except (websockets.ConnectionClosed, OSError, ConnectionError, TimeoutError) as exc:
+                if isinstance(exc, websockets.ConnectionClosed) and getattr(exc.rcvd, "code", None) in {
+                    1002,
+                    1003,
+                    1007,
+                    1008,
+                    1009,
+                }:
+                    raise ProtocolError("Live rejected the connection protocol or policy") from exc
                 control.motion_paused = True
+                if connected:
+                    await robot.stop()
                 conversation.append(
                     "developer",
                     "Motion was stopped after a connection interruption. Do not resume without a new request.",
                 )
                 failures = 1 if time.monotonic() - started > 30 else failures + 1
-                log.write("connection_lost", error=type(exc).__name__, attempt=failures)
-                if failures > settings.reconnect_attempts:
-                    raise RuntimeError("Reconnect attempts exhausted") from exc
+                reconnect_started = reconnect_started or time.monotonic()
+                delay = (
+                    min(2 ** min(failures, 4), 15)
+                    if failures <= settings.reconnect_attempts
+                    else settings.reconnect_cooldown
+                )
+                log.write(
+                    "connection_lost",
+                    session_id=session.recovery.session_id,
+                    error=type(exc).__name__,
+                    attempt=failures,
+                    close_code=getattr(getattr(exc, "rcvd", None), "code", None),
+                )
                 if player:
                     log.write("audio_final", **player.stats())
                     await asyncio.to_thread(player.close)
                     player = None
                 if not stop.is_set():
+                    log.write(
+                        "reconnect_wait",
+                        attempt=failures,
+                        delay_seconds=delay,
+                        cooling_down=failures > settings.reconnect_attempts,
+                    )
                     with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(stop.wait(), min(2**failures, 15))
+                        await asyncio.wait_for(stop.wait(), min(delay, max(0, deadline - time.monotonic())))
             finally:
                 if player:
                     log.write("audio_final", **player.stats())
