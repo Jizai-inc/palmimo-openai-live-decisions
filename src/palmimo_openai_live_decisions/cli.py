@@ -16,6 +16,7 @@ from .audio import NullPlayback
 from .config import DECISIONS_URL, LIVE_URL, Settings, reaction_questions
 from .events import EventLog
 from .idle import IdleDecider
+from .policy import Conversation
 from .robot import build_robot
 from .runtime import ProtocolError, Session, close_connection, run, start_connection
 
@@ -49,7 +50,10 @@ async def check_api(key: str, settings: Settings, log: EventLog) -> None:
     async with websockets.connect(
         LIVE_URL, additional_headers={"Authorization": f"Bearer {key}"}, open_timeout=20
     ) as ws:
-        await start_connection(ws, settings, [])
+        history = Conversation()
+        history.append("user", "これから英語で話してね。")
+        history.append("assistant", "Sure, let's speak English.")
+        await start_connection(ws, settings, history.history())
         try:
             async with asyncio.timeout(1):
                 while True:
@@ -58,7 +62,7 @@ async def check_api(key: str, settings: Settings, log: EventLog) -> None:
                         raise ProtocolError(str(event.get("error", {}).get("code")))
         except TimeoutError:
             pass
-        log.write("live_verified", model="gpt-live-1", native_decisions=True)
+        log.write("live_verified", model="gpt-live-1", native_decisions=True, initial_history=True)
         await close_connection(ws, session, NullPlayback())
 
 

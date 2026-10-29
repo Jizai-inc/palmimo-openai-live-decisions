@@ -159,6 +159,10 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
     async def server(ws: ServerConnection) -> None:
         start = json.loads(await ws.recv())
         configs.append(start["session"])
+        for item in start["session"]["input"]:
+            assert isinstance(item["content"], list) and len(item["content"]) == 1
+            expected_type = "output_text" if item["role"] == "assistant" else "input_text"
+            assert item["content"][0]["type"] == expected_type
         index = len(configs)
         await ws.send(json.dumps({"type": "session.started", "session": {"id": f"live_{index}"}}))
         await ws.send(
@@ -227,7 +231,7 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
         assert bytes(players[-1].received) == pcm
     if mode in {"burst", "closed"}:
         assert robot.stops == 1
-        assert any("Please keep speaking English" in p["content"] for p in configs[1]["input"])
+        assert any("Please keep speaking English" in p["content"][0]["text"] for p in configs[1]["input"])
         assert any(e["kind"] == "reconnected" and e["motion_paused"] for e in log.events)
     if mode == "single":
         assert robot.stops == 0

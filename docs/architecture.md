@@ -93,6 +93,12 @@ new connection in quiet listening receives the listen-only instruction again,
 because appended instructions do not carry over. It does not replay actions or recreate
 the exact previous audio state.
 
+Startup history uses one typed text part per message (`input_text` for user and
+developer turns, `output_text` for assistant turns). It keeps the continuity
+notice and the most recent turns, capped at 128 messages and 6,000 UTF-8 text
+bytes. The byte budget conservatively leaves room for message overhead within
+Live's default 8,192-token initial-history limit, including multilingual text.
+
 A single `decision_failed` drops that evaluation while audio and conversation
 continue in the same session. Failed trigger/delegation IDs are remembered so a
 late result cannot execute the failed action. The app sends an empty

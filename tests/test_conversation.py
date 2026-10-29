@@ -298,7 +298,30 @@ def test_reconnect_preserves_multilingual_turns_without_rewriting_them() -> None
     for role, text in turns:
         conversation.append(role, text)
     config = session_config(Settings(), conversation.history())
-    assert config["input"][1:] == [{"role": role, "content": text} for role, text in turns]
+    assert config["input"][1:] == [
+        {
+            "type": "message",
+            "role": role,
+            "content": [{"type": "output_text" if role == "assistant" else "input_text", "text": text}],
+        }
+        for role, text in turns
+    ]
+
+
+def test_reconnect_history_fits_live_limits_and_keeps_latest_text() -> None:
+    conversation = Conversation()
+    for index in range(160):
+        conversation.append("assistant" if index % 2 else "user", str(index))
+    items = session_config(Settings(), conversation.history())["input"]
+    assert len(items) == 128
+    assert items[0]["role"] == "developer"
+    assert items[-1]["content"][0]["text"] == "159"
+
+    conversation.append("user", "日本語の長い会話" * 1000 + "最新の話題")
+    items = session_config(Settings(), conversation.history())["input"]
+    assert sum(len(item["content"][0]["text"].encode("utf-8")) for item in items) <= 6000
+    assert items[-1]["content"][0]["text"].endswith("最新の話題")
+    assert "\ufffd" not in items[-1]["content"][0]["text"]
 
 
 def test_celebratory_clap_does_not_repeat_on_adjacent_transcript_fragments() -> None:
