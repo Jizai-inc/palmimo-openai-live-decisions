@@ -77,6 +77,7 @@ class Session:
         self.scene_time = 0.0
         self.pending_steering: dict[str, str] = {}
         self.awaiting_quiet_reply = False
+        self.quiet_reply_request: tuple[str, float] | None = None
         self.recovery = DecisionRecovery(settings, log)
         self.health_probe: tuple[str, float] | None = None
         self.send: Callable[[dict[str, Any]], Awaitable[None]]
@@ -333,7 +334,15 @@ class Session:
                 self.action_speech.set()
             if role == "assistant" and event.get("delta", "").strip() and self.awaiting_quiet_reply:
                 self.awaiting_quiet_reply = False
-                self.log.write("quiet_reply_started")
+                self.log.write(
+                    "quiet_reply_started",
+                    elapsed_ms=(
+                        round((time.monotonic() - self.quiet_reply_request[1]) * 1000)
+                        if self.quiet_reply_request is not None
+                        else None
+                    ),
+                )
+                self.quiet_reply_request = None
             if role == "user":
                 self.input_events += 1
                 self.input_tail = (self.input_tail + event.get("delta", ""))[-32:]
@@ -392,6 +401,27 @@ class Session:
                     if self.policy.quiet != was_quiet:
                         await self.sync_listening()
                         self.awaiting_quiet_reply = not self.policy.quiet
+                        self.quiet_reply_request = None
+                        if self.awaiting_quiet_reply:
+                            identity = uuid.uuid4().hex
+                            self.quiet_reply_request = (identity, time.monotonic())
+                            await self.send(
+                                {
+                                    "type": "session.commentary.append",
+                                    "event_id": identity,
+                                    "delegation_id": None,
+                                    "content": (
+                                        "The person has just addressed you after quiet listening. "
+                                        "Answer their latest conversational question briefly now, in their language, "
+                                        "using the preceding conversation when relevant. If already answering or answered, "
+                                        "do not repeat it. Do not announce the listening-state change. "
+                                        "For a motion or scene request, follow the delegation policy and wait for its "
+                                        "backend notice; this is not confirmation that any action ran. "
+                                        "Honor any newer quiet request and yield while the person continues speaking."
+                                    ),
+                                }
+                            )
+                            self.log.write("quiet_reply_requested", event_id=identity)
 
                 async def react() -> None:
                     if reaction.gesture in {"nod", "shake"}:
@@ -426,6 +456,10 @@ class Session:
             state = self.pending_steering.pop(identity, None)
             if state is not None:
                 self.log.write("steering_accepted", event_id=identity, listening=state)
+        elif kind == "session.commentary.appended":
+            identity = event.get("client_event_id", "")
+            if self.quiet_reply_request is not None and identity == self.quiet_reply_request[0]:
+                self.log.write("quiet_reply_accepted", event_id=identity)
         elif kind == "session.input_audio.muted":
             self.log.write("microphone", muted=True)
         elif kind == "session.input_audio.unmuted":

@@ -49,6 +49,10 @@ API call or a simulated test.
    mention Palmimo to someone else and confirm it stays quiet; then address it
    directly by name. Test `i` and the spoken idle-resume command as recovery paths.
    Reconnect while quiet and confirm it remains quiet until a new direct request.
+   Include a brief "聞こえてる？" after reconnection. Check that a direct-address
+   release sends one reply request and produces speech, rather than merely
+   acknowledging the instruction update. Adjacent transcript fragments must not
+   produce repeated replies; a newer quiet request must take effect immediately.
    Check quiet transitions, steering acceptance, and subsequent assistant text
    against what was heard. An acknowledgment event alone is not a successful reply.
 11. Install the app through Portal using the PR branch or a release containing

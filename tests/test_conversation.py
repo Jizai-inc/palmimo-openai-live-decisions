@@ -242,11 +242,13 @@ async def test_answer_decision_while_quiet_sends_the_release() -> None:
     await session.dispatch(source("asked"), NullPlayback())
     await session.dispatch(result("asked", participation="answer"), NullPlayback())
     assert not session.policy.quiet
-    assert len(sent) == 2
+    assert len(sent) == 3
     assert sent[0]["type"] == "session.instructions.append"
     assert sent[0]["content"] == QUIET_RELEASE and sent[0]["event_id"]
     assert sent[1]["type"] == "decision.item.create"
     assert "state: active" in sent[1]["item"]["content"][0]["text"]
+    assert sent[2]["type"] == "session.commentary.append"
+    assert sent[2]["event_id"] and sent[2]["delegation_id"] is None
     await session.dispatch(
         {"type": "session.instructions.appended", "client_event_id": sent[0]["event_id"]}, NullPlayback()
     )
@@ -254,6 +256,34 @@ async def test_answer_decision_while_quiet_sends_the_release() -> None:
     assert session.awaiting_quiet_reply
     await session.dispatch({**source("reply", "output"), "delta": "Yes, I can hear you."}, NullPlayback())
     assert not session.awaiting_quiet_reply
+    assert session.quiet_reply_request is None
+
+
+async def test_quiet_reply_is_requested_once_per_fresh_release_and_cancelled_by_new_quiet() -> None:
+    session = Session(Settings(), FakeRobot(), EventLog())  # type: ignore[arg-type]
+    sent: list[dict[str, Any]] = []
+
+    async def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+
+    session.send = send
+    session.policy.quiet = True
+    await session.restore_quiet()
+    assert not any(e["type"] == "session.commentary.append" for e in sent)
+    for identity in ("heard", "question-tail"):
+        await session.dispatch(source(identity), NullPlayback())
+        await session.dispatch(result(identity, participation="answer"), NullPlayback())
+    assert len([e for e in sent if e["type"] == "session.commentary.append"]) == 1
+    assert session.awaiting_quiet_reply
+    await session.dispatch(source("quiet-again"), NullPlayback())
+    await session.dispatch(result("quiet-again", participation="yield"), NullPlayback())
+    assert session.policy.quiet and not session.awaiting_quiet_reply
+    assert session.quiet_reply_request is None
+    await session.dispatch(result("heard", participation="answer"), NullPlayback())
+    assert len([e for e in sent if e["type"] == "session.commentary.append"]) == 1
+    await session.dispatch(source("new-question"), NullPlayback())
+    await session.dispatch(result("new-question", participation="answer"), NullPlayback())
+    assert len([e for e in sent if e["type"] == "session.commentary.append"]) == 2
 
 
 async def test_reconnect_restores_quiet_listening_only_when_quiet() -> None:

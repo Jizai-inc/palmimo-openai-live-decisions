@@ -50,10 +50,18 @@ transition; new quiet requests have no timed lockout. Reconnection discards old
 source events but preserves quiet state and motion cooldowns. Neither assistant
 transcript events nor stale results can change quiet state.
 
+A fresh direct-address release sends one `session.commentary.append` to request
+the conversational answer, in addition to updating instructions. An instruction
+acknowledgment alone can leave the voice model silent after a short question.
+The reply request does not repeat on adjacent `answer` decisions, announce
+reconnection, override a newer quiet request, or confirm an unexecuted action.
+Restoring quiet state on reconnection sends no speech request.
+
 `quiet_entered`, `quiet_released`, and `quiet_restored` log state changes.
 `steering_sent` and `steering_accepted` correlate instruction delivery by event ID.
+`quiet_reply_requested` and `quiet_reply_accepted` track the separate speech request.
 Acceptance does not prove speech: `quiet_reply_started` marks the first subsequent
-assistant transcript fragment, while audio diagnostics and supervised listening
+assistant transcript fragment and its latency, while audio diagnostics and supervised listening
 are still needed to establish audible, meaningful recovery.
 
 ## Motion and stopping
