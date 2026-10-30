@@ -103,6 +103,10 @@ class Settings:
     decision_ttl: float = 3.0
     confidence: float = 0.65
     reconnect_attempts: int = 6
+    reconnect_cooldown: float = 30.0
+    decision_failure_limit: int = 3
+    decision_failure_window: float = 30.0
+    decision_probe_timeout: float = 10.0
     stream_stall_seconds: float = 2.0
     action_ack_timeout: float = 5.0
     action_lead_seconds: float = 0.5
@@ -171,13 +175,38 @@ def reaction_questions(output: bool = False) -> list[dict[str, Any]]:
     return questions
 
 
+def live_history(history: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Serialize recent turns within Live's item and initial-history token limits."""
+    prefix = history[:1] if history and history[0]["role"] == "developer" else []
+    remaining = 6000 - sum(len(part["content"].encode("utf-8")) for part in prefix)
+    recent: list[dict[str, str]] = []
+    for part in reversed(history[len(prefix) :][-(128 - len(prefix)) :]):
+        if remaining <= 0:
+            break
+        text = part["content"].encode("utf-8")[-remaining:].decode("utf-8", errors="ignore")
+        if not text:
+            continue
+        recent.append({"role": part["role"], "content": text})
+        remaining -= len(text.encode("utf-8"))
+    return [
+        {
+            "type": "message",
+            "role": part["role"],
+            "content": [
+                {"type": "output_text" if part["role"] == "assistant" else "input_text", "text": part["content"]}
+            ],
+        }
+        for part in [*prefix, *reversed(recent)]
+    ]
+
+
 def session_config(settings: Settings, history: list[dict[str, str]]) -> dict[str, Any]:
     """Build one full-duplex session with native transcript triggers."""
     return {
         "model": "gpt-live-1",
         "instructions": PERSONA,
         "store": False,
-        "input": history,
+        "input": live_history(history),
         "audio": {"format": {"type": "audio/pcm", "rate": RATE}, "output": {"voice": settings.voice}},
         "delegation": {
             "type": "decisions",

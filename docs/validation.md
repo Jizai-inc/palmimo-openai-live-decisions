@@ -27,6 +27,14 @@ API call or a simulated test.
    request applause. Assess actual behavior rather than event counts alone.
 8. Under supervision with the local stop available, test connection loss. Check
    that motion holds and an old command is not replayed on reconnection.
+   Inject one synthetic `decision_failed` at the client event boundary: verify
+   audio continues, the health probe is acknowledged, and the session ID stays
+   unchanged. Inject three errors within thirty seconds: verify a new session,
+   preserved conversational language and quiet state, and no replayed motion.
+   Test missing probe acknowledgement, prolonged outage, and stopping during the
+   retry delay with the local WebSocket tests before hardware. Synthetic events
+   verify client recovery, not the root cause or recoverability of a real API
+   failure. Record naturally occurring failures separately.
 9. Repeat conversation, action announcements, stop, resume, and scene questions
    in each target language. Switch languages mid-session, explicitly request a
    language, and check that a quoted foreign phrase does not cause a switch.
@@ -41,6 +49,10 @@ API call or a simulated test.
    mention Palmimo to someone else and confirm it stays quiet; then address it
    directly by name. Test `i` and the spoken idle-resume command as recovery paths.
    Reconnect while quiet and confirm it remains quiet until a new direct request.
+   Include a brief "聞こえてる？" after reconnection. Check that a direct-address
+   release sends one reply request and produces speech, rather than merely
+   acknowledging the instruction update. Adjacent transcript fragments must not
+   produce repeated replies; a newer quiet request must take effect immediately.
    Check quiet transitions, steering acceptance, and subsequent assistant text
    against what was heard. An acknowledgment event alone is not a successful reply.
 11. Install the app through Portal using the PR branch or a release containing

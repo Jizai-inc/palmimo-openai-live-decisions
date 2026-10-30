@@ -46,6 +46,9 @@ class LifecycleRobot:
         if self.fail_cancel:
             raise RuntimeError("cancel failed")
 
+    async def stop(self) -> str:
+        return "Motion held."
+
     async def close(self) -> None:
         self.closes += 1
 

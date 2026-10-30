@@ -163,10 +163,21 @@ conversation without saying its name. Merely mentioning Palmimo to someone else
 does not release quiet listening. Recognition is model-driven in every language.
 
 Each release explicitly tells the voice model it may speak again and updates
-Decisions with the current listening state. A new quiet request can take effect
+Decisions with the current listening state. A direct-address release also sends
+one speakable reply request; accepting the state change alone is not a reply.
+A new quiet request can take effect
 immediately; there is no timed lockout. Late results from before a release cannot
 restore an old quiet request. Quiet listening survives reconnection. The spoken
 idle-resume command or `i` + Enter is also an operator recovery path.
+
+An isolated `decision_failed` skips one evaluation while conversation continues.
+The app checks that the session still responds without making it speak. Repeated
+failures, an unresponsive session, or a lost connection trigger reconnection with
+recent conversation and listening state preserved. Movement stops and stays held
+until a new request. Repeated connection failures slow retries rather than leave
+the app permanently stopped. Authentication, configuration, device faults, and
+safety-related session closure still stop the app; manual stop takes priority.
+See [recovery and diagnostics](docs/architecture.md#recovery-and-boundaries).
 
 ## Configuration
 
