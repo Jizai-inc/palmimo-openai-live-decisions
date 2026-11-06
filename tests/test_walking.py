@@ -2,7 +2,6 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -127,13 +126,9 @@ async def test_spoken_stop_interrupts_walking_while_output_audio_continues(fragm
     await session.settle()
 
 
-def test_capture_and_server_watchdogs_reject_stalled_control_paths() -> None:
+def test_server_watchdog_rejects_stalled_walking_control_path() -> None:
     robot = Robot(Palmimo())
     session = Session(Settings(), robot, EventLog())
-    session.last_microphone_frame = time.monotonic() - 3
-    with pytest.raises(RuntimeError, match="Microphone capture stalled"):
-        session.check_streams()
-    session.last_microphone_frame = time.monotonic()
     session.last_server_event = time.monotonic() - 3
     robot.walking = True
     with pytest.raises(ConnectionError, match="Live event stream stalled"):
@@ -161,18 +156,15 @@ async def test_network_loss_settles_actual_sdk_walking(monkeypatch: pytest.Monke
             await lost.wait()
             raise ConnectionError("simulated transport failure")
 
-    async def microphone(mic: Any) -> AsyncIterator[bytes]:
-        while True:
-            yield b"\0\0" * 160
-            await asyncio.sleep(0.01)
-
     async def report() -> None:
         started.set()
 
     async def walk() -> None:
         await robot.action("forward", report)
 
-    monkeypatch.setattr(runtime, "microphone_frames", microphone)
+    from audio_fakes import FakeMic
+
+    robot.mic = FakeMic()
     session.schedule(walk)
     controller = asyncio.create_task(
         runtime.run_connection(Socket(), session, NullPlayback(), asyncio.Event(), asyncio.Queue())

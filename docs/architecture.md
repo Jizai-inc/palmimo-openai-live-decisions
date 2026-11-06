@@ -85,6 +85,12 @@ ALSA playback runs off the event loop with a 500 ms buffer and 400 ms startup
 threshold. Bounded queueing prevents stale audio accumulating indefinitely;
 packet-gap, backlog, and underrun counters expose failures without saving audio.
 
+A dedicated subscriber thread drains processed SDK microphone frames independently
+of WebSocket writes and event-loop scheduling. The SDK subscription holds at most
+eight chunks; the application queue holds at most 500 ms of PCM and drops old
+frames by both byte count and age. Reconnection discards the entire queue. Muting
+continues draining capture but does not transmit microphone samples.
+
 The public companion example provides local face tracking and hand-wave
 detection. A fresh camera frame is interpreted by a stateless Responses request
 using `gpt-6-luna`. GPT-Live receives concise text from that request. Frames are
@@ -127,6 +133,26 @@ authentication, protocol/policy, safety closure, and device failures are not
 retried. Explicit remote hangup and local stop end the app. `q` and SIGTERM work
 during a reconnect delay.
 
+Audio supervision separates capture age, pending-send age, and event-loop delay.
+After two seconds of capture or send stagnation, motion settles into its neutral
+hold. A shorter-than-six-second gap can recover on the same session; listening
+state remains unchanged and a new motion request is required to move again.
+A send blocked for six seconds retires the connection, without reopening a healthy
+microphone. Capture that stays silent for six seconds (missing frames, not quiet
+PCM) retires the session and closes/reopens the SDK microphone before reconnecting.
+Reopening is limited to two attempts within sixty seconds; exhaustion or an SDK
+reopen/device exception terminates safely. The subscriber is joined before a
+reopen, and an in-flight SDK lifecycle operation is settled before robot parking.
+Stopping during reopen prevents a new open when possible and always proceeds to
+resource release. No failed operation or old audio is replayed.
+
+An event-loop delay is logged separately. Capture freshness comes from the
+subscriber thread, so a slow network send is not reported as a microphone fault.
+The supervisor holds movement after a long scheduling gap and allows completed
+writes to settle before evaluating them. Device diagnostics do not prove the
+absence of a hardware fault: the SDK's processing and overflow counters help
+distinguish capture load from delivery backpressure.
+
 Diagnostics include session IDs, decision IDs and source associations when
 available, API error category and parameter, a question-configuration hash,
 session closure reason, health-probe latency, retry delays, and recovery latency.
@@ -135,6 +161,13 @@ audio bytes or complete protocol payloads. Existing transcript logging remains
 private; never commit it or share it without review. An error can refer to a
 trigger that never produced a source event, so its source association may be
 unknown rather than guessed.
+
+`input_audio` / `input_audio_final` add capture/send ages, pending and dropped
+frames, maximum send latency and event-loop lag, plus available SDK block,
+overflow, late-processing, and processing-time counters. `input_stalled`,
+`input_recovered`, `send_stalled`, `capture_restart_requested`, and
+`capture_reopened` identify the recovery stage. A reopened device or reconnected
+session alone does not establish audible conversation recovery.
 
 This app does not authenticate nearby people or associate a face with a speaker.
 It has no web server, remote command listener, persistent personal memory, or

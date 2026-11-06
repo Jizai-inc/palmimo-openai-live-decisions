@@ -8,11 +8,13 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from audio_fakes import FakeMic
 from websockets.asyncio.server import ServerConnection, serve
 
-from palmimo_openai_live_decisions import audio, recovery, runtime
+from palmimo_openai_live_decisions import recovery, runtime
 from palmimo_openai_live_decisions.config import Settings
 from palmimo_openai_live_decisions.events import EventLog
+from palmimo_openai_live_decisions.input_audio import AudioInput
 from palmimo_openai_live_decisions.recovery import DecisionRecovery, ProtocolError, RetryableSessionError
 
 
@@ -97,7 +99,7 @@ class TestRobot:
     __test__ = False
 
     def __init__(self) -> None:
-        self.mic = object()
+        self.mic = FakeMic()
         self.walking = False
         self.face_tracking = False
         self.connects = 0
@@ -150,11 +152,6 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
 
         def stats(self) -> dict[str, Any]:
             return {}
-
-    async def microphone(mic: Any) -> AsyncIterator[bytes]:
-        while True:
-            yield b"\0\0" * 32
-            await asyncio.sleep(0.01)
 
     async def server(ws: ServerConnection) -> None:
         start = json.loads(await ws.recv())
@@ -213,7 +210,6 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
                 return
 
     monkeypatch.setattr(runtime, "Playback", Player)
-    monkeypatch.setattr(runtime, "microphone_frames", microphone)
     async with serve(server, "127.0.0.1", 0) as listener:
         port = listener.sockets[0].getsockname()[1]
         monkeypatch.setattr(runtime, "LIVE_URL", f"ws://127.0.0.1:{port}")
@@ -306,13 +302,16 @@ async def test_health_probe_distinguishes_quiet_listening_from_unresponsive_sess
 
 
 async def test_microphone_io_error_is_not_a_network_retry() -> None:
-    class BrokenMic:
-        def stream(self) -> Any:
-            raise OSError("synthetic microphone failure")
-
-    with pytest.raises(RuntimeError, match="Microphone capture device failed"):
-        async for _ in audio.microphone_frames(BrokenMic()):
-            pytest.fail("A broken microphone cannot produce frames")
+    mic = FakeMic()
+    mic.broken = True
+    capture = AudioInput(mic)
+    capture.start()
+    try:
+        await asyncio.sleep(0.05)
+        with pytest.raises(RuntimeError, match="Microphone capture device failed"):
+            capture.check()
+    finally:
+        await asyncio.to_thread(capture.close)
 
 
 async def test_stop_during_connection_setup_does_not_open_devices(monkeypatch: pytest.MonkeyPatch) -> None:

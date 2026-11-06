@@ -35,6 +35,14 @@ API call or a simulated test.
    retry delay with the local WebSocket tests before hardware. Synthetic events
    verify client recovery, not the root cause or recoverability of a real API
    failure. Record naturally occurring failures separately.
+   Also inject a three-second processed-capture gap and a three-second input-send
+   delay separately: capture must continue during the send delay, motion must hold,
+   and conversation must resume on the same session. A gap longer than six seconds
+   must replace the session; only the capture gap may reopen the microphone.
+   Verify a fresh audible reply after each recovery, including a direct address
+   from quiet listening, without replaying speech or movement. Before hardware,
+   test repeated capture exhaustion, explicit device failure, event-loop delay,
+   stale-frame dropping, and stopping during blocked send or microphone reopen.
 9. Repeat conversation, action announcements, stop, resume, and scene questions
    in each target language. Switch languages mid-session, explicitly request a
    language, and check that a quoted foreign phrase does not cause a switch.
