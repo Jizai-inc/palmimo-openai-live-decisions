@@ -204,7 +204,7 @@ class Session:
         await self.sync_listening()
 
     def check_streams(self) -> None:
-        """Stop when capture fails, or walking loses its remote voice control path."""
+        """Watch decision probes and the remote control path used while walking."""
         now = time.monotonic()
         if self.health_probe is not None and now - self.health_probe[1] > self.settings.decision_probe_timeout:
             raise RetryableSessionError("Live session did not acknowledge its health probe")

@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 import pytest
+from audio_fakes import FakeMic
 from palmimo_sdk import Palmimo
 
 from palmimo_openai_live_decisions import runtime
@@ -139,7 +140,7 @@ def test_dance_uses_the_agreed_four_seconds() -> None:
     assert ACTIONS["dance"] == ("dance", {"seconds": 4.0})
 
 
-async def test_network_loss_settles_actual_sdk_walking(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_network_loss_settles_actual_sdk_walking() -> None:
     lost = asyncio.Event()
     robot = Robot(Palmimo())
     session = Session(Settings(), robot, EventLog())
@@ -161,8 +162,6 @@ async def test_network_loss_settles_actual_sdk_walking(monkeypatch: pytest.Monke
 
     async def walk() -> None:
         await robot.action("forward", report)
-
-    from audio_fakes import FakeMic
 
     robot.mic = FakeMic()
     session.schedule(walk)
