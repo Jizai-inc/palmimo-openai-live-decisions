@@ -16,10 +16,11 @@ from typing import Any
 import websockets
 
 from .actions import ACTION_DESCRIPTIONS, ACTIONS, CONTINUOUS_ACTIONS
-from .audio import NullPlayback, Playback, microphone_frames
+from .audio import NullPlayback, Playback
 from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
 from .idle import IDLE_ACTIONS, IDLE_PAUSE_SECONDS, IdleDecider
+from .input_audio import AudioInput, CaptureRecovery, CaptureStalled, SendStalled
 from .policy import QUIET_RESTORED, Conversation, Reaction, ReactionPolicy
 from .recovery import DecisionRecovery, ProtocolError, RetryableSessionError, bounded, session_closed_error
 from .robot import FACES, Robot
@@ -64,7 +65,7 @@ class Session:
         self.final_usage = False
         self.input_tail = ""
         self.last_server_event = time.monotonic()
-        self.last_microphone_frame = time.monotonic()
+        self.input_recovering = False
         self.action_speech: asyncio.Event | None = None
         self.vision = vision
         self.visual_task: asyncio.Task[None] | None = None
@@ -85,7 +86,7 @@ class Session:
     def schedule(self, work: Callable[[], Coroutine[Any, Any, None]], *, origin: str = "reaction") -> bool:
         """Let reactions interrupt idle movement; drop other competing gestures."""
         self.check_motion()
-        if self.control.motion_paused or self.control.muted:
+        if self.control.motion_paused or self.control.muted or self.input_recovering:
             return False
         if self.motion is not None and not self.motion.done():
             if self.motion_origin == "idle" and origin == "reaction":
@@ -203,14 +204,24 @@ class Session:
         await self.sync_listening()
 
     def check_streams(self) -> None:
-        """Stop when capture fails, or walking loses its remote voice control path."""
+        """Watch decision probes and the remote control path used while walking."""
         now = time.monotonic()
         if self.health_probe is not None and now - self.health_probe[1] > self.settings.decision_probe_timeout:
             raise RetryableSessionError("Live session did not acknowledge its health probe")
-        if now - self.last_microphone_frame > self.settings.stream_stall_seconds:
-            raise RuntimeError("Microphone capture stalled")
         if self.robot.walking and now - self.last_server_event > self.settings.stream_stall_seconds:
             raise ConnectionError("Live event stream stalled while walking")
+
+    async def hold_for_input(self, stage: str) -> None:
+        """Hold motion locally without depending on a potentially blocked send."""
+        self.input_recovering = True
+        self.control.motion_paused = True
+        self.last_action_input = self.input_events
+        try:
+            await self.settle()
+            await self.robot.stop()
+        except OSError as exc:
+            raise RuntimeError("Motion hold failed") from exc
+        self.log.write("motion_stopped", reason=f"audio_{stage}_stalled")
 
     async def announce_action(self, action: str, delegation: str) -> bool:
         """Wait for voice onset and the playback margin before starting a requested action."""
@@ -505,6 +516,10 @@ class Session:
             and a.get("confidence", 0) >= self.settings.confidence
         ]
         action = choices[0].get("choice", "none") if choices else "none"
+        if self.input_recovering and action in {*ACTIONS, "resume_idle"} and action != "stop":
+            self.last_action_input = self.input_events
+            self.log.write("action_discarded", reason="audio_recovering", action=action)
+            return
         if action in {*ACTIONS, "observe", "resume_idle"}:
             if self.input_events <= self.last_action_input:
                 action = "none"
@@ -681,8 +696,8 @@ async def close_connection(ws: Any, session: Session, player: Any) -> None:
         return
     try:
         session.log.write("session_close_requested", session_id=session.recovery.session_id)
-        await ws.send(json.dumps({"type": "session.close"}))
         async with asyncio.timeout(5):
+            await ws.send(json.dumps({"type": "session.close"}))
             while not session.final_usage:
                 event = json.loads(await ws.recv())
                 if event.get("type") == "session.closed":
@@ -696,11 +711,34 @@ async def run_connection(
 ) -> None:
     """Cancel and await every producer before draining final session events."""
 
+    capture = AudioInput(session.robot.mic)
+    sending: float | None = None
+    last_sent: float | None = None
+    sent_chunks = 0
+    max_send_ms = 0.0
+    max_loop_lag_ms = 0.0
+
+    def input_stats() -> dict[str, Any]:
+        now = time.monotonic()
+        return {
+            **capture.stats(),
+            "sent_chunks": sent_chunks,
+            "send_age_seconds": round(now - last_sent, 3) if last_sent is not None else None,
+            "send_pending_seconds": round(now - sending, 3) if sending is not None else 0.0,
+            "max_send_ms": round(max_send_ms, 1),
+            "max_loop_lag_ms": round(max_loop_lag_ms, 1),
+            "muted": session.control.muted,
+        }
+
     async def send(event: dict[str, Any]) -> None:
-        await ws.send(json.dumps(event, ensure_ascii=False))
+        try:
+            async with asyncio.timeout(session.settings.audio_recovery_seconds):
+                await ws.send(json.dumps(event, ensure_ascii=False))
+        except TimeoutError as exc:
+            session.log.write("send_stalled", event_type=event.get("type"), **input_stats())
+            raise SendStalled("Live send stalled") from exc
 
     session.send = send
-    session.last_microphone_frame = time.monotonic()
     session.last_server_event = time.monotonic()
     if session.control.muted:
         await send({"type": "session.input_audio.mute"})
@@ -717,11 +755,69 @@ async def run_connection(
         raise ConnectionError("Live connection ended")
 
     async def microphone() -> None:
-        async for pcm in microphone_frames(session.robot.mic):
-            session.last_microphone_frame = time.monotonic()
-            if not session.control.muted:
-                await send({"type": "session.input_audio.append", "audio": base64.b64encode(pcm).decode()})
-        raise RuntimeError("Microphone stream ended")
+        nonlocal sending, last_sent, sent_chunks, max_send_ms
+        while True:
+            pcm = capture.take()
+            if pcm is None:
+                await asyncio.sleep(0.01)
+                continue
+            if session.control.muted:
+                continue
+            sending = time.monotonic()
+            await send({"type": "session.input_audio.append", "audio": base64.b64encode(pcm).decode()})
+            last_sent = time.monotonic()
+            max_send_ms = max(max_send_ms, (last_sent - sending) * 1000)
+            sent_chunks += 1
+            sending = None
+
+    async def monitor_input() -> None:
+        nonlocal max_loop_lag_ms
+        stalled: str | None = None
+        stalled_at = time.monotonic()
+        while True:
+            before_sleep = time.monotonic()
+            await asyncio.sleep(0.1)
+            now = time.monotonic()
+            lag = max(0, now - before_sleep - 0.1)
+            max_loop_lag_ms = max(max_loop_lag_ms, lag * 1000)
+            if lag >= session.settings.stream_stall_seconds:
+                session.log.write("event_loop_delayed", delay_ms=round(lag * 1000), **input_stats())
+                await session.hold_for_input("event_loop")
+                # Let writes already completed by the transport finish before judging their age.
+                await asyncio.sleep(0)
+            capture.check()
+            stats = input_stats()
+            stage = None
+            if stats["capture_age_seconds"] >= session.settings.stream_stall_seconds:
+                stage = "capture"
+            elif stats["send_pending_seconds"] >= session.settings.stream_stall_seconds:
+                stage = "send"
+            if stage is not None and stage != stalled:
+                stalled, stalled_at = stage, now
+                session.log.write("input_stalled", stage=stage, **stats)
+                await session.hold_for_input(stage)
+            if stats["capture_age_seconds"] >= session.settings.audio_recovery_seconds:
+                raise CaptureStalled("Microphone capture did not recover within the grace period")
+            if stage is None and (stalled is not None or session.input_recovering):
+                session.log.write(
+                    "input_recovered",
+                    stage=stalled or "event_loop",
+                    elapsed_ms=round((time.monotonic() - stalled_at) * 1000),
+                    **stats,
+                )
+                stalled = None
+                session.input_recovering = False
+                session.control.motion_paused = True
+                session.last_action_input = session.input_events
+                await send(
+                    {
+                        "type": "session.thinking.append",
+                        "delegation_id": None,
+                        "content": "Audio input is available again. Movement was stopped and remains held until a new "
+                        "motion request. Do not replay an earlier action or announce recovery. Continue listening "
+                        "or conversing according to the current listening state.",
+                    }
+                )
 
     async def supervise() -> None:
         last_gaze = time.monotonic()
@@ -734,6 +830,7 @@ async def run_connection(
             player.check()
             if time.monotonic() - last_audio_log >= 5:
                 session.log.write("audio", **player.stats())
+                session.log.write("input_audio", **input_stats())
                 last_audio_log = time.monotonic()
             if time.monotonic() - last_health_log >= 30:
                 now = time.monotonic()
@@ -743,7 +840,7 @@ async def run_connection(
                     events=session.events,
                     decisions=session.decision_events,
                     last_server_event_age=round(now - session.last_server_event, 2),
-                    last_microphone_frame_age=round(now - session.last_microphone_frame, 2),
+                    last_microphone_frame_age=capture.stats()["capture_age_seconds"],
                     quiet=session.policy.quiet,
                     muted=session.control.muted,
                     motion_paused=session.control.motion_paused,
@@ -790,6 +887,8 @@ async def run_connection(
                     quiet=session.policy.quiet,
                 )
             elif command == "i":
+                if session.input_recovering:
+                    continue
                 session.control.motion_paused = False
                 release = session.policy.release()
                 session.input_tail = ""
@@ -802,7 +901,11 @@ async def run_connection(
             if session.vision is not None and not session.vision.lock.locked():
                 await session.observe_scene()
 
-    tasks = [asyncio.create_task(coro) for coro in (receive(), microphone(), supervise(), operator(), stop.wait())]
+    capture.start()
+    tasks = [
+        asyncio.create_task(coro)
+        for coro in (receive(), microphone(), monitor_input(), supervise(), operator(), stop.wait())
+    ]
     if session.vision is not None:
         tasks.append(asyncio.create_task(scene_updates()))
     if session.idle is not None:
@@ -811,14 +914,23 @@ async def run_connection(
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
+    except (CaptureStalled, SendStalled):
+        session.log.write("input_connection_interrupted", **input_stats())
+        if not session.input_recovering:
+            await session.hold_for_input("connection")
+        raise
     finally:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            await session.settle()
-        except OSError as exc:
-            raise RuntimeError("Device cleanup failed") from exc
+            session.log.write("input_audio_final", **input_stats())
+            await asyncio.to_thread(capture.close)
+        finally:
+            try:
+                await session.settle()
+            except OSError as exc:
+                raise RuntimeError("Device cleanup failed") from exc
 
 
 async def run(
@@ -832,6 +944,7 @@ async def run(
     deadline = time.monotonic() + settings.seconds if settings.seconds else float("inf")
     connected = False
     reconnect_started: float | None = None
+    capture_recovery = CaptureRecovery()
     frames = getattr(robot, "camera_frames", None)
     vision = SceneVision(frames, key) if frames is not None else None
     idle = IdleDecider(key) if settings.idle_enabled and not settings.audio_only else None
@@ -914,6 +1027,10 @@ async def run(
                 control.motion_paused = True
                 if connected:
                     await robot.stop()
+                if isinstance(exc, CaptureStalled) and not stop.is_set():
+                    log.write("capture_restart_requested", session_id=session.recovery.session_id)
+                    if await capture_recovery.restart(robot.mic, stop):
+                        log.write("capture_reopened", attempts_in_window=len(capture_recovery.attempts))
                 conversation.append(
                     "developer",
                     "Motion was stopped after a connection interruption. Do not resume without a new request.",

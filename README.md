@@ -175,7 +175,10 @@ The app checks that the session still responds without making it speak. Repeated
 failures, an unresponsive session, or a lost connection trigger reconnection with
 recent conversation and listening state preserved. Movement stops and stays held
 until a new request. Repeated connection failures slow retries rather than leave
-the app permanently stopped. Authentication, configuration, device faults, and
+the app permanently stopped. Microphone capture runs separately from network
+sends with bounded buffering. A brief audio stall holds movement while the same
+conversation continues; a persistent stall triggers a connection replacement
+and, only for stalled capture, a bounded microphone reopen. Authentication, configuration, explicit device faults, and
 safety-related session closure still stop the app; manual stop takes priority.
 See [recovery and diagnostics](docs/architecture.md#recovery-and-boundaries).
 

@@ -108,6 +108,7 @@ class Settings:
     decision_failure_window: float = 30.0
     decision_probe_timeout: float = 10.0
     stream_stall_seconds: float = 2.0
+    audio_recovery_seconds: float = 6.0
     action_ack_timeout: float = 5.0
     action_lead_seconds: float = 0.5
     vision_interval: float = 10.0
