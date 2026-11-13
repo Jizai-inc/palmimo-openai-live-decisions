@@ -23,18 +23,18 @@ def test_pacing_uses_actual_pcm_duration_without_catchup_credit(monkeypatch: pyt
     rate = AudioSendRate()
     rate.sent(1024, 10.0, 10.001)
     now[0] = 10.01
-    assert rate.delay() == pytest.approx(0.022)
+    assert rate.delay() == pytest.approx(0.032 / 1.05 - 0.01)
     now[0] = 20.0
     assert rate.delay() == 0
     rate.sent(3200, 20.0, 20.002)
     now[0] = 20.01
-    assert rate.delay() == pytest.approx(0.09)
+    assert rate.delay() == pytest.approx(0.1 / 1.05 - 0.01)
     rate.sent(1024, 20.1, 23.0)
     now[0] = 23.0
     assert rate.delay() == 0
     rate.sent(1024, 23.0, 23.001)
     now[0] = 23.002
-    assert rate.delay() == pytest.approx(0.03)
+    assert rate.delay() == pytest.approx(0.032 / 1.05 - 0.002)
 
 
 def test_rate_pause_window_resume_and_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,7 +225,7 @@ async def test_backlogged_microphone_is_paced_at_pcm_duration(monkeypatch: pytes
     async with asyncio.timeout(3):
         await runtime.run_connection(Socket(), session, Player(), stop, asyncio.Queue())
     for (started, size), (following, _) in zip(writes, writes[1:], strict=False):
-        assert following - started >= size / 32000 - 0.002
+        assert following - started >= size / (32000 * 1.05) - 0.002
     final = next(e for e in log.events if e["kind"] == "input_audio_final")
     assert final["sent_audio_ms"] == 600
     assert final["dropped_chunks"] > 0

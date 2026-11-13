@@ -92,7 +92,9 @@ frames by both byte count and age. Reconnection discards the entire queue. Mutin
 continues draining capture but does not transmit microphone samples.
 
 The sender spaces writes by each PCM frame's actual byte count (mono PCM16 at
-the configured sample rate). It waits before taking the next frame, so stale
+the configured sample rate), allowing at most 1.05x realtime to absorb small
+scheduler delays without accumulating speech latency. This stays below the API's
+1.2x limit; ordinary microphone capture still arrives at realtime. It waits before taking the next frame, so stale
 speech can expire in the capture queue. A delayed write or event-loop pause
 does not earn credit to send a catch-up burst. This controls client writes;
 TCP buffering and network/server arrival timing remain separate.

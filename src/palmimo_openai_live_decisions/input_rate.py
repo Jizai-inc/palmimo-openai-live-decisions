@@ -7,6 +7,7 @@ from typing import Any
 from .config import RATE
 
 INPUT_RATE_ERROR = "input_audio_rate_limit_exceeded"
+MAX_SEND_RATE = 1.05
 
 
 class AudioSendRate:
@@ -43,7 +44,9 @@ class AudioSendRate:
 
     def sent(self, size: int, started: float, finished: float) -> bool:
         """Count completed writes, not server acceptance; return a local resume signal."""
-        duration = size / (RATE * 2)
+        # Small scheduler drift must not accumulate speech latency. Keep well below
+        # the API's 1.2x limit, with no credit to dump a backlog after a long pause.
+        duration = size / (RATE * 2 * MAX_SEND_RATE)
         self.next_send_at = max(started + duration, finished)
         if self.first_send_at is None:
             self.first_send_at = started
@@ -74,5 +77,6 @@ class AudioSendRate:
             "send_rate_5s": round(bytes_5s / (RATE * 2 * 5), 3),
             "pacing_wait_ms": round(self.delay() * 1000, 1),
             "rate_limit_events": self.error_count,
+            "max_send_rate": MAX_SEND_RATE,
             "rate_pause_remaining_ms": round(max(0.0, self.pause_until - now) * 1000, 1),
         }
