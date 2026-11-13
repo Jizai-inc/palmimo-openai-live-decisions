@@ -43,6 +43,16 @@ API call or a simulated test.
    from quiet listening, without replaying speech or movement. Before hardware,
    test repeated capture exhaustion, explicit device failure, event-loop delay,
    stale-frame dropping, and stopping during blocked send or microphone reopen.
+   Inject one `input_audio_rate_limit_exceeded`: the same connection must keep
+   receiving/playing audio while input pauses, then resume paced fresh input.
+   Verify mute and local stop during the pause. Three such errors within thirty
+   seconds must reconnect with listening state/history intact. Before hardware,
+   feed a faster-than-realtime synthetic microphone and verify wire-send timing
+   follows PCM duration rather than draining the backlog in a burst. Run a
+   supervised session for at least thirty minutes, recording one/five-second
+   send rates, rejected audio, reconnections and actual audible recovery. Include
+   quiet listening followed by a direct question. Keep the ordinary stop control
+   available and watch hardware health; a timer-induced stop is not a failure.
 9. Repeat conversation, action announcements, stop, resume, and scene questions
    in each target language. Switch languages mid-session, explicitly request a
    language, and check that a quoted foreign phrase does not cause a switch.

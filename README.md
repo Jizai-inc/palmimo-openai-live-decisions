@@ -151,6 +151,11 @@ The app has a direct transcript stop path for Japanese stop phrases and English
 `stop`; other languages depend on model-based action delegation. These paths do
 not promise identical recognition or latency across languages.
 
+Microphone transmission is paced by the audio's sample duration. An input-audio
+speed-limit error briefly pauses sending and discards queued speech while keeping
+the conversation connection open. Repeated errors or an unresponsive connection
+trigger bounded reconnection. See [recovery behavior and diagnostics](docs/architecture.md#recovery-and-boundaries).
+
 A spoken stop is cloud-dependent and is not a physical emergency stop.
 Keep a local operator stop available. Connection loss holds motion; reconnecting
 does not replay an old action. Microphone and server-event watchdogs stop

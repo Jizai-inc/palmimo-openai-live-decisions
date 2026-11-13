@@ -91,6 +91,12 @@ eight chunks; the application queue holds at most 500 ms of PCM and drops old
 frames by both byte count and age. Reconnection discards the entire queue. Muting
 continues draining capture but does not transmit microphone samples.
 
+The sender spaces writes by each PCM frame's actual byte count (mono PCM16 at
+the configured sample rate). It waits before taking the next frame, so stale
+speech can expire in the capture queue. A delayed write or event-loop pause
+does not earn credit to send a catch-up burst. This controls client writes;
+TCP buffering and network/server arrival timing remain separate.
+
 The public companion example provides local face tracking and hand-wave
 detection. A fresh camera frame is interpreted by a stateless Responses request
 using `gpt-6-luna`. GPT-Live receives concise text from that request. Frames are
@@ -123,6 +129,19 @@ in thirty seconds, a missing probe acknowledgement, or a lost/expired session
 require a replacement session. Transport keepalives also detect a lost socket
 independently of speech. This cannot prove every upstream subsystem is healthy;
 it confirms a responsive session and subsequent successful decisions.
+
+`input_audio_rate_limit_exceeded` is handled separately from terminal protocol
+errors. The first occurrence pauses microphone transmission for one second;
+a second within thirty seconds pauses it for two. Capture continues, pending
+speech is discarded throughout the pause, and playback and event reception stay
+active. A health probe must be acknowledged. Motion holds while input is paused
+and requires a fresh motion request afterward; quiet listening and mute are
+unchanged. Three occurrences in thirty seconds, a missing probe acknowledgment,
+or a lost connection require a replacement session. Discarded input is never
+resent. Authentication, configuration, and unrecognized errors remain terminal.
+Transport close has a five-second timeout in addition to the five-second final
+usage wait, so an unresponsive peer cannot impose the library's longer default
+close wait before reconnecting. Hardware settling still finishes before recovery.
 
 Before reconnecting, producers and motions settle, the robot returns to its
 neutral stance, and playback is discarded. Movement stays held until a fresh
@@ -168,6 +187,14 @@ overflow, late-processing, and processing-time counters. `input_stalled`,
 `input_recovered`, `send_stalled`, `capture_restart_requested`, and
 `capture_reopened` identify the recovery stage. A reopened device or reconnected
 session alone does not establish audible conversation recovery.
+
+Input diagnostics also include total PCM duration, elapsed sending time, audio
+milliseconds sent in the last one/five seconds, corresponding client write-rate
+ratios, pacing/pause waits, rate-limit event count, and transport-buffer bytes
+when available. `input_rate_limited` records the state at rejection, while
+`input_rate_resumed` means local writes resumed after the pause, not that the
+server acknowledged accepting every sample. Audio appends have no per-frame
+acceptance acknowledgment. These counters contain no raw audio.
 
 This app does not authenticate nearby people or associate a face with a speaker.
 It has no web server, remote command listener, persistent personal memory, or
