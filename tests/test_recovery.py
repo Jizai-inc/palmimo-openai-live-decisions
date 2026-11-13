@@ -275,7 +275,10 @@ async def test_motion_io_error_is_not_a_network_retry() -> None:
 
 
 @pytest.mark.parametrize("acknowledged", [False, True])
-async def test_health_probe_distinguishes_quiet_listening_from_unresponsive_session(acknowledged: bool) -> None:
+@pytest.mark.parametrize("code", ["decision_failed", "input_audio_rate_limit_exceeded"])
+async def test_health_probe_distinguishes_quiet_listening_from_unresponsive_session(
+    acknowledged: bool, code: str
+) -> None:
     log = RecordingLog()
     session = runtime.Session(Settings(), TestRobot(), log)  # type: ignore[arg-type]
     session.policy.quiet = True
@@ -285,7 +288,7 @@ async def test_health_probe_distinguishes_quiet_listening_from_unresponsive_sess
         sent.append(event)
 
     session.send = send
-    await session.dispatch(failure(), None)
+    await session.dispatch(failure(code=code), None)
     assert sent[0]["type"] == "session.update" and sent[0]["session"] == {}
     assert session.health_probe is not None
     identity, started = session.health_probe

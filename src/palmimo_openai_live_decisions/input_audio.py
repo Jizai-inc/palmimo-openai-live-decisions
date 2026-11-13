@@ -83,6 +83,13 @@ class AudioInput:
             if self.error is not None:
                 raise RuntimeError("Microphone capture device failed") from self.error
 
+    def discard(self) -> None:
+        """Drop pending speech during mute or a rate-limit pause, without stopping capture."""
+        with self.lock:
+            self.dropped += len(self.frames)
+            self.frames.clear()
+            self.pending = 0
+
     def stats(self) -> dict[str, Any]:
         """Expose counters and ages only; never log microphone samples."""
         with self.lock:

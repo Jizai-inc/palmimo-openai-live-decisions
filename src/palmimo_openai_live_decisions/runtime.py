@@ -21,6 +21,7 @@ from .config import LIVE_URL, Settings, session_config
 from .events import EventLog
 from .idle import IDLE_ACTIONS, IDLE_PAUSE_SECONDS, IdleDecider
 from .input_audio import AudioInput, CaptureRecovery, CaptureStalled, SendStalled
+from .input_rate import INPUT_RATE_ERROR, AudioSendRate
 from .policy import QUIET_RESTORED, Conversation, Reaction, ReactionPolicy
 from .recovery import DecisionRecovery, ProtocolError, RetryableSessionError, bounded, session_closed_error
 from .robot import FACES, Robot
@@ -80,13 +81,15 @@ class Session:
         self.awaiting_quiet_reply = False
         self.quiet_reply_request: tuple[str, float] | None = None
         self.recovery = DecisionRecovery(settings, log)
+        self.audio_rate = AudioSendRate()
+        self.input_stats: Callable[[], dict[str, Any]] = self.audio_rate.stats
         self.health_probe: tuple[str, float] | None = None
         self.send: Callable[[dict[str, Any]], Awaitable[None]]
 
     def schedule(self, work: Callable[[], Coroutine[Any, Any, None]], *, origin: str = "reaction") -> bool:
         """Let reactions interrupt idle movement; drop other competing gestures."""
         self.check_motion()
-        if self.control.motion_paused or self.control.muted or self.input_recovering:
+        if self.control.motion_paused or self.control.muted or self.input_recovering or self.audio_rate.paused():
             return False
         if self.motion is not None and not self.motion.done():
             if self.motion_origin == "idle" and origin == "reaction":
@@ -484,7 +487,19 @@ class Session:
                 usage=event.get("usage"),
             )
         elif kind == "error":
-            self.recovery.handle_error(event)
+            if event.get("error", {}).get("code") == INPUT_RATE_ERROR:
+                self.recovery.record_error(event)
+                failures = self.audio_rate.limited()
+                self.log.write(
+                    "input_rate_limited",
+                    session_id=self.recovery.session_id,
+                    failures_in_window=failures,
+                    **self.input_stats(),
+                )
+                if failures >= 3:
+                    raise RetryableSessionError("Repeated input_audio_rate_limit_exceeded events")
+            else:
+                self.recovery.handle_error(event)
             if self.health_probe is None:
                 identity = f"health_{uuid.uuid4().hex}"
                 self.health_probe = (identity, time.monotonic())
@@ -722,12 +737,16 @@ async def run_connection(
         now = time.monotonic()
         return {
             **capture.stats(),
+            **session.audio_rate.stats(),
             "sent_chunks": sent_chunks,
             "send_age_seconds": round(now - last_sent, 3) if last_sent is not None else None,
             "send_pending_seconds": round(now - sending, 3) if sending is not None else 0.0,
             "max_send_ms": round(max_send_ms, 1),
             "max_loop_lag_ms": round(max_loop_lag_ms, 1),
             "muted": session.control.muted,
+            "transport_buffer_bytes": (
+                ws.transport.get_write_buffer_size() if getattr(ws, "transport", None) is not None else None
+            ),
         }
 
     async def send(event: dict[str, Any]) -> None:
@@ -739,6 +758,7 @@ async def run_connection(
             raise SendStalled("Live send stalled") from exc
 
     session.send = send
+    session.input_stats = input_stats
     session.last_server_event = time.monotonic()
     if session.control.muted:
         await send({"type": "session.input_audio.mute"})
@@ -757,18 +777,27 @@ async def run_connection(
     async def microphone() -> None:
         nonlocal sending, last_sent, sent_chunks, max_send_ms
         while True:
+            if session.control.muted or session.audio_rate.paused():
+                capture.discard()
+                await asyncio.sleep(0.01)
+                continue
+            delay = session.audio_rate.delay()
+            if delay > 0:
+                await asyncio.sleep(min(delay, 0.1))
+                continue
             pcm = capture.take()
             if pcm is None:
                 await asyncio.sleep(0.01)
-                continue
-            if session.control.muted:
                 continue
             sending = time.monotonic()
             await send({"type": "session.input_audio.append", "audio": base64.b64encode(pcm).decode()})
             last_sent = time.monotonic()
             max_send_ms = max(max_send_ms, (last_sent - sending) * 1000)
             sent_chunks += 1
+            resumed = session.audio_rate.sent(len(pcm), sending, last_sent)
             sending = None
+            if resumed:
+                session.log.write("input_rate_resumed", session_id=session.recovery.session_id, **input_stats())
 
     async def monitor_input() -> None:
         nonlocal max_loop_lag_ms
@@ -792,6 +821,8 @@ async def run_connection(
                 stage = "capture"
             elif stats["send_pending_seconds"] >= session.settings.stream_stall_seconds:
                 stage = "send"
+            elif session.audio_rate.paused():
+                stage = "rate_limit"
             if stage is not None and stage != stalled:
                 stalled, stalled_at = stage, now
                 session.log.write("input_stalled", stage=stage, **stats)
@@ -962,6 +993,7 @@ async def run(
                     max_size=4 * 1024 * 1024,
                     ping_interval=10,
                     ping_timeout=15,
+                    close_timeout=5,
                 ) as ws:
                     snapshot = await start_connection(ws, settings, conversation.history()) or {}
                     session.recovery.session_id = bounded(snapshot.get("id"))

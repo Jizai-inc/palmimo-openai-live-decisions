@@ -58,8 +58,8 @@ class DecisionRecovery:
             self.pending_failure = None
         return True
 
-    def handle_error(self, event: dict[str, Any]) -> None:
-        """Skip one failed evaluation; all other API errors remain terminal."""
+    def record_error(self, event: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Record a bounded error before its specific recovery policy runs."""
         error = event.get("error", {})
         code = bounded(error.get("code"))
         message = bounded(error.get("message"))
@@ -78,6 +78,11 @@ class DecisionRecovery:
             decision_id=identity,
             **source,
         )
+        return code, identity
+
+    def handle_error(self, event: dict[str, Any]) -> None:
+        """Skip one failed evaluation; unrecognized API errors remain terminal."""
+        code, identity = self.record_error(event)
         if code != "decision_failed":
             raise ProtocolError(code or "unknown_api_error")
         now = time.monotonic()
