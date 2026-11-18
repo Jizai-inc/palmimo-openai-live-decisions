@@ -76,7 +76,23 @@ API call or a simulated test.
 11. Install the app through Portal using the PR branch or a release containing
    this manifest. Set the API key locally, start with the selected voice, then
    stop through Portal and verify graceful parking and resource release.
-12. End with `q`, wait for `stopped`, and independently verify device release,
+12. With a validated [songbook](songbook.md), request a song in Japanese and
+   English. Verify the introduction precedes the recorded song, no normal voice
+   or gestures overlap it, and the song's language is described accurately.
+   Stop halfway with spoken Japanese, spoken English, and local `x` separately.
+   Confirm buffered music ends promptly and a new conversational question gets
+   a natural audible answer. Also let a song finish and ask another question.
+   Check no lyrics trigger a new song or motion. Interrupt the connection during
+   playback and verify cancellation, normal recovery, and no automatic replay.
+   Before hardware, exercise the actual introduction path with continuous silent
+   output packets after speech: the song must start without a packet-delivery gap.
+   Initial silence, missing text, continuing speech and stale packets must not
+   count as a completed introduction. Verify all queued introduction PCM drains
+   before music and that stopping during the introduction or a blocked drain
+   cancels music, settles the worker, and restores voice. Synthetic tests cover
+   this handoff, output suppression, cancellation and buffer reset; they do not
+   establish recognition latency, echo rejection, or audible continuity.
+13. End with `q`, wait for `stopped`, and independently verify device release,
    21 responding servos, no hardware errors, and torque off.
 
 Record the app commit, SDK and helper versions, hardware/audio setup, API models,
