@@ -123,7 +123,9 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--env-file", type=Path)
     result.add_argument("--log-path", type=Path)
-    result.add_argument("--songbook", type=Path, help="Local songbook JSON (or PALMIMO_SONGBOOK environment variable)")
+    result.add_argument(
+        "--songbook", type=Path, help="Local songbook JSON (or OPENAI_LIVE_SONGBOOK environment variable)"
+    )
     result.add_argument("--voice", default="marin")
     result.add_argument("--mic-device", default="ReSpeaker")
     result.add_argument("--speaker-device", default="ReSpeaker")
@@ -144,7 +146,8 @@ def main() -> None:
         raise SystemExit("--seconds must be nonnegative")
     if args.env_file:
         load_dotenv(args.env_file, override=False)
-    songbook = args.songbook or (Path(os.environ["PALMIMO_SONGBOOK"]) if os.environ.get("PALMIMO_SONGBOOK") else None)
+    songbook_env = os.environ.get("OPENAI_LIVE_SONGBOOK") or os.environ.get("PALMIMO_SONGBOOK")
+    songbook = args.songbook or (Path(songbook_env) if songbook_env else None)
     songs = load_songbook(songbook)
     if args.command == "check-songs":
         print(

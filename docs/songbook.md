@@ -60,9 +60,12 @@ uv run palmimo-openai-live-decisions run --env-file .env \
   --songbook /path/to/songbook.json
 ```
 
-Alternatively set `PALMIMO_SONGBOOK` to that absolute path, including in Portal's
+Alternatively set `OPENAI_LIVE_SONGBOOK` to that absolute path, including in Portal's
 app environment. The files must be readable by the app's OS user. Keep the path
 local to your deployment. Omit it to retain ordinary conversation without songs.
+The CLI also accepts the legacy `PALMIMO_SONGBOOK` variable, but Portal reserves
+the `PALMIMO_` prefix. `--songbook` takes precedence over `OPENAI_LIVE_SONGBOOK`,
+which takes precedence over `PALMIMO_SONGBOOK`.
 
 ## Try it
 
