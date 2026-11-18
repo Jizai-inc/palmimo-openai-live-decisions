@@ -26,3 +26,7 @@ description = "Disable autonomous idle gestures, for example while comparing aud
 required = true
 description = "OpenAI API key with access to the Live, Decisions, and Responses APIs."
 help_url = "https://platform.openai.com/api-keys"
+
+[env.PALMIMO_SONGBOOK]
+required = false
+description = "Optional absolute path to a local songbook JSON and its prepared PCM WAV files."

@@ -20,6 +20,8 @@ a general-purpose desktop voice assistant or an unattended robot controller.
 - Silently wave back at a detected hand wave, answer questions about the current
   camera view, and occasionally clap when the conversation calls for it.
 - Prioritize stop requests, reject stale decisions, and settle and park on exit.
+- Perform prepared songs from a local songbook, interrupt playback on request,
+  and return the shared speaker to conversation. See [songbook setup](docs/songbook.md).
 
 ## Conversation language
 
@@ -138,10 +140,10 @@ The hardware checks above apply to the first Portal start as well.
 
 | Input | Effect |
 | --- | --- |
-| Say `止まって` or `Stop` | Return legs and neck to their startup stance and hold autonomous motion; conversation remains active |
+| Say `止まって` / `止めて` or `Stop` | Stop any playing song, return legs and neck to their startup stance and hold autonomous motion; conversation remains active |
 | Say `自由に動いて` / `You can move freely again`, or request a new motion | Resume movement |
 | `s` + Enter | Show connection, audio diagnostics, and motion state |
-| `x` + Enter | Return to stance and hold motion while keeping the conversation open |
+| `x` + Enter | Stop a song, return to stance and hold motion while keeping the conversation open |
 | `i` + Enter | Release quiet listening and the motion hold; resume idle gestures |
 | `m` + Enter | Hold motion and mute input; already generated speech may continue |
 | `l` + Enter | Resume input |

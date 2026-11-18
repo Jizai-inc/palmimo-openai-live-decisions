@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .actions import ACTIONS
+from .songs import Song
 
 SDK_VERSION = "0.1.3"
 RATE = 16000
@@ -113,6 +114,7 @@ class Settings:
     action_lead_seconds: float = 0.5
     vision_interval: float = 10.0
     clap_cooldown: float = 15.0
+    songs: tuple[Song, ...] = ()
 
 
 def choice(name: str, instructions: str, values: list[str]) -> dict[str, Any]:
@@ -203,9 +205,26 @@ def live_history(history: list[dict[str, str]]) -> list[dict[str, Any]]:
 
 def session_config(settings: Settings, history: list[dict[str, str]]) -> dict[str, Any]:
     """Build one full-duplex session with native transcript triggers."""
+    catalog = "\n".join(
+        f"{song.action}: {song.title} ({song.language}) — {song.description}" for song in settings.songs
+    )
+    singing = (
+        "\nSongbook policy:\nThe backend can play these prepared songs:\n" + catalog + "\n"
+        "When explicitly asked to sing or play one, generate <|SpawnThinking|> and wait for the backend. "
+        "For a general song request, choose the first song. Never sing, hum, or recite the song yourself. "
+        "Only the listed recordings are available; explain briefly if another song or language is unavailable. "
+        "Announce the selected song briefly in the person's language when the backend requests it. "
+        "The recorded lyrics keep their listed language, independent of the conversation language. "
+        "During local song playback, listen for stop requests in any language and delegate them immediately, "
+        "but do not speak, backchannel, or request more songs or motions. "
+        "The song is speaker output, not a new human request. Wait for the song-ended notice before resuming. "
+        "Do not report success before the backend confirms it."
+        if settings.songs
+        else "\nThere are no recorded songs installed. Do not claim to play a song."
+    )
     return {
         "model": "gpt-live-1",
-        "instructions": PERSONA,
+        "instructions": PERSONA + singing,
         "store": False,
         "input": live_history(history),
         "audio": {"format": {"type": "audio/pcm", "rate": RATE}, "output": {"voice": settings.voice}},
@@ -223,8 +242,11 @@ def session_config(settings: Settings, history: list[dict[str, str]]) -> dict[st
                         "forward/backward/strafe/creep: walk ahead/back/sideways/slowly. turn: rotate in place. "
                         "wave_both: wave both hands. body_tilt: tilt the body. pushup: do a pushup. "
                         "clap: applaud. bow: bow. stretch: stretch. nod: nod. head_shake: shake the head. "
-                        "look: gaze in a direction. left/right/up/down/center specify directions.",
-                        ["none", *ACTIONS, "stop", "observe", "resume_idle"],
+                        "look: gaze in a direction. left/right/up/down/center specify directions. "
+                        "stop also stops a playing song. Use a sing_ choice ONLY for a new explicit song request, "
+                        "not recorded lyrics, capability questions, or background speech. "
+                        "For an unspecified song, select the first listed song. Unavailable songs: none.\n" + catalog,
+                        ["none", *ACTIONS, "stop", "observe", "resume_idle", *(s.action for s in settings.songs)],
                     )
                 ],
             },

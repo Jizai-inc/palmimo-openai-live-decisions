@@ -19,6 +19,7 @@ from .idle import IdleDecider
 from .policy import Conversation
 from .robot import build_robot
 from .runtime import ProtocolError, Session, close_connection, run, start_connection
+from .songs import load_songbook
 
 
 async def check_api(key: str, settings: Settings, log: EventLog) -> None:
@@ -108,9 +109,10 @@ async def operate(settings: Settings, key: str, log: EventLog) -> None:
 def parser() -> argparse.ArgumentParser:
     """Expose independent input/output device selection and no default time limit."""
     result = argparse.ArgumentParser(description="Palmimo GPT-Live conversational companion")
-    result.add_argument("command", choices=["run", "check-api"])
+    result.add_argument("command", choices=["run", "check-api", "check-songs"])
     result.add_argument("--env-file", type=Path)
     result.add_argument("--log-path", type=Path)
+    result.add_argument("--songbook", type=Path, help="Local songbook JSON (or PALMIMO_SONGBOOK environment variable)")
     result.add_argument("--voice", default="marin")
     result.add_argument("--mic-device", default="ReSpeaker")
     result.add_argument("--speaker-device", default="ReSpeaker")
@@ -131,6 +133,20 @@ def main() -> None:
         raise SystemExit("--seconds must be nonnegative")
     if args.env_file:
         load_dotenv(args.env_file, override=False)
+    songbook = args.songbook or (Path(os.environ["PALMIMO_SONGBOOK"]) if os.environ.get("PALMIMO_SONGBOOK") else None)
+    songs = load_songbook(songbook)
+    if args.command == "check-songs":
+        print(
+            json.dumps(
+                [
+                    {"id": song.id, "title": song.title, "language": song.language, "seconds": song.seconds}
+                    for song in songs
+                ],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         raise SystemExit("OPENAI_API_KEY is required")
@@ -145,6 +161,7 @@ def main() -> None:
         idle_enabled=not args.no_idle,
         port=args.port,
         seconds=args.seconds,
+        songs=songs,
     )
     log = EventLog(args.log_path)
     try:

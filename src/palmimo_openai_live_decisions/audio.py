@@ -14,11 +14,18 @@ class Playback:
     """Keep audio writes off the event loop and reject a growing backlog."""
 
     def __init__(self, device: str, max_seconds: float = 1.5) -> None:
+        self.device = device
+        self.max_seconds = max_seconds
+        self.resetting = False
+        self._open()
+
+    def _open(self) -> None:
+        """Start a new speaker process after the previous one has been reaped."""
         from palmimo_sdk import resolve_alsa_device
 
-        resolved = resolve_alsa_device(device, kind="playback")
+        resolved = resolve_alsa_device(self.device, kind="playback")
         if not resolved:
-            raise RuntimeError(f"Playback device not found: {device}")
+            raise RuntimeError(f"Playback device not found: {self.device}")
         self.process = subprocess.Popen(
             [
                 "aplay",
@@ -41,7 +48,7 @@ class Playback:
             stderr=subprocess.PIPE,
         )
         self.queue: queue.Queue[bytes | None] = queue.Queue()
-        self.limit = int(max_seconds * RATE * 2)
+        self.limit = int(self.max_seconds * RATE * 2)
         self.pending = 0
         self.lock = threading.Lock()
         self.error: Exception | None = None
@@ -113,12 +120,16 @@ class Playback:
                 self.process.stdin.flush()
                 with self.lock:
                     self.pending -= len(pcm)
+            if not self.closed and self.process.stdin:
+                self.process.stdin.close()
         except Exception as exc:
             with self.lock:
                 self.error = exc
 
     def check(self) -> None:
         """Detect failures even when the model is silent."""
+        if self.resetting:
+            return
         if self.error or self.process.poll() is not None:
             raise RuntimeError("Speaker process stopped unexpectedly")
 
@@ -144,6 +155,32 @@ class Playback:
         if self.thread.is_alive() or self.monitor.is_alive():
             raise RuntimeError("Audio worker did not stop")
 
+    def interrupt(self) -> None:
+        """Drop queued and ALSA-buffered audio before handing the speaker back."""
+        self.resetting = True
+        try:
+            self.close()
+            self._open()
+        finally:
+            self.resetting = False
+
+    def drain(self) -> None:
+        """Play the complete queued introduction before opening a fresh song stream."""
+        self.resetting = True
+        try:
+            self.queue.put_nowait(None)
+            try:
+                result = self.process.wait(timeout=self.max_seconds + 3)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("Speaker did not drain the introduction") from exc
+            self.thread.join(timeout=1)
+            if result != 0 or self.error or self.thread.is_alive():
+                raise RuntimeError("Speaker failed while draining the introduction")
+            self.close()
+            self._open()
+        finally:
+            self.resetting = False
+
 
 class NullPlayback:
     """Count returned PCM during non-hardware API checks."""
@@ -160,3 +197,9 @@ class NullPlayback:
 
     def close(self) -> None:
         """No device needs closing."""
+
+    def interrupt(self) -> None:
+        """No buffered audio needs discarding."""
+
+    def drain(self) -> None:
+        """No physical playback buffer needs draining."""
