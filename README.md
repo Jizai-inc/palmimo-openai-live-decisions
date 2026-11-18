@@ -22,6 +22,9 @@ a general-purpose desktop voice assistant or an unattended robot controller.
 - Prioritize stop requests, reject stale decisions, and settle and park on exit.
 - Perform prepared songs from a local songbook, interrupt playback on request,
   and return the shared speaker to conversation. See [songbook setup](docs/songbook.md).
+- Look up weather, company information, and other current facts on request,
+  then answer in the conversation language with sources. Searches run separately
+  from audio and can be corrected or cancelled. See [web search](docs/search.md).
 
 ## Conversation language
 
@@ -38,12 +41,17 @@ For example, speak Japanese or English, or ask to switch during a session:
 パルミーモ、こんにちは
 パルミーモはどう思う？
 今、目の前に何が見える？
+東京の明日の天気を調べて
+OpenAIはどんな会社か調べて
 ダンスして
 止まって
 自由に動いて
 
 Hi Palmimo, what do you think?
 What can you see in front of you?
+Look up tomorrow's weather in Tokyo.
+Actually, Osaka, not Tokyo.
+Cancel the search.
 Please dance.
 Stop.
 You can move freely again.
@@ -143,6 +151,7 @@ The hardware checks above apply to the first Portal start as well.
 | Say `止まって` / `止めて` or `Stop` | Stop any playing song, return legs and neck to their startup stance and hold autonomous motion; conversation remains active |
 | Say `自由に動いて` / `You can move freely again`, or request a new motion | Resume movement |
 | `s` + Enter | Show connection, audio diagnostics, and motion state |
+| `w` + Enter | Show the latest delivered search answer, source links, and retrieval time |
 | `x` + Enter | Stop a song, return to stance and hold motion while keeping the conversation open |
 | `i` + Enter | Release quiet listening and the motion hold; resume idle gestures |
 | `m` + Enter | Hold motion and mute input; already generated speech may continue |
@@ -198,6 +207,9 @@ Use `uv run palmimo-openai-live-decisions --help` for the complete CLI.
 | `--env-file` | Optional environment file; a process-level `OPENAI_API_KEY` is also accepted |
 | `--port` | SDK serial-port discovery; specify a device when required |
 | `--voice` | `marin` |
+| `--no-web-search` | Disable web lookups; enabled by default |
+| `--search-model` | `gpt-6-luna`; must support Responses `web_search` |
+| `--search-timezone` | `Asia/Tokyo`; resolves relative dates, never infers a location |
 | `--seconds` | `0`, meaning until manually stopped; a positive value bounds a test |
 | `--audio-only` | Disable servos, display, and camera |
 | `--no-idle` | Disable autonomous gestures for comparison |

@@ -19,6 +19,7 @@ from .idle import IdleDecider
 from .policy import Conversation
 from .robot import build_robot
 from .runtime import ProtocolError, Session, close_connection, run, start_connection
+from .search import WebSearch
 from .songs import load_songbook
 
 
@@ -32,7 +33,11 @@ async def check_api(key: str, settings: Settings, log: EventLog) -> None:
         request = urllib.request.Request(
             DECISIONS_URL,
             data=json.dumps(
-                {"model": "gpt-6-luna", "input": "パルミーモ、どう思う？", "questions": reaction_questions()},
+                {
+                    "model": "gpt-6-luna",
+                    "input": "パルミーモ、どう思う？",
+                    "questions": reaction_questions(search=settings.search_enabled),
+                },
                 ensure_ascii=False,
             ).encode(),
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -94,7 +99,7 @@ async def operate(settings: Settings, key: str, log: EventLog) -> None:
         robot = build_robot(settings)
         log.write(
             "operator",
-            commands="q=exit, x=stop motion, i=resume idle, m=mute input, l=listen, s=status",
+            commands="q=exit, x=stop motion, i=resume idle, m=mute input, l=listen, s=status, w=last search sources",
             seconds=settings.seconds,
             echo_cancel=settings.echo_cancel,
         )
@@ -109,7 +114,13 @@ async def operate(settings: Settings, key: str, log: EventLog) -> None:
 def parser() -> argparse.ArgumentParser:
     """Expose independent input/output device selection and no default time limit."""
     result = argparse.ArgumentParser(description="Palmimo GPT-Live conversational companion")
-    result.add_argument("command", choices=["run", "check-api", "check-songs"])
+    result.add_argument("command", choices=["run", "check-api", "check-songs", "check-search"])
+    result.add_argument("--query", help="A public question for the device-free check-search command")
+    result.add_argument("--no-web-search", action="store_true", help="Disable web lookups")
+    result.add_argument("--search-model", default="gpt-6-luna")
+    result.add_argument(
+        "--search-timezone", default="Asia/Tokyo", help="IANA timezone for dates, not an inferred location"
+    )
     result.add_argument("--env-file", type=Path)
     result.add_argument("--log-path", type=Path)
     result.add_argument("--songbook", type=Path, help="Local songbook JSON (or PALMIMO_SONGBOOK environment variable)")
@@ -162,10 +173,27 @@ def main() -> None:
         port=args.port,
         seconds=args.seconds,
         songs=songs,
+        search_enabled=not args.no_web_search,
+        search_model=args.search_model,
+        search_timezone=args.search_timezone,
     )
     log = EventLog(args.log_path)
     try:
-        asyncio.run(check_api(key, settings, log) if args.command == "check-api" else operate(settings, key, log))
+        if args.command == "check-search":
+            if not args.query:
+                raise SystemExit("check-search requires --query")
+
+            async def check_search() -> None:
+                backend = WebSearch(key, settings.search_model, timezone=settings.search_timezone)
+                try:
+                    result = await backend.lookup([{"role": "user", "content": args.query}])
+                    print(result.markdown())
+                finally:
+                    await backend.close()
+
+            asyncio.run(check_search())
+        else:
+            asyncio.run(check_api(key, settings, log) if args.command == "check-api" else operate(settings, key, log))
     except Exception as exc:
         log.write("failed", error=type(exc).__name__, message=str(exc).replace(key, "[REDACTED]")[:800])
         raise SystemExit(1) from None

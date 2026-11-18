@@ -85,6 +85,14 @@ ALSA playback runs off the event loop with a 500 ms buffer and 400 ms startup
 threshold. Bounded queueing prevents stale audio accumulating indefinitely;
 packet-gap, backlog, and underrun counters expose failures without saving audio.
 
+The Live session is accepted before opening hardware. After device initialization,
+the app sends an empty `session.update` and drains pre-microphone output until its
+matching acknowledgment. Only then does normal capture/playback start. This avoids
+burst-playing output accumulated during slow hardware startup into the 1.5-second
+queue limit. `startup_output_drained` records discarded packet count/duration.
+The normal playback backlog limit is unchanged; a missing startup acknowledgment
+times out and follows connection recovery rather than pretending readiness.
+
 A dedicated subscriber thread drains processed SDK microphone frames independently
 of WebSocket writes and event-loop scheduling. The SDK subscription holds at most
 eight chunks; the application queue holds at most 500 ms of PCM and drops old
@@ -108,6 +116,13 @@ Automatic wave-back stays silent: completion is recorded in the local event log
 without sending a completion notification to the voice model.
 
 ## Recovery and boundaries
+
+Web lookups use a separate asynchronous Responses client with `web_search`.
+The `search`/`cancel_search` delegated choices select explicit tasks, while an
+input-transcript `search_control` choice guards delivery against newer requests
+and corrections. Each connection owns and settles its lookup tasks; a small
+completed-result record and HTTP pool survive connection replacement. Lookup
+failures do not feed the Live reconnection policy. See [search lifecycle](search.md).
 
 Recovery keeps at most the latest 12,000 transcript characters in memory and
 preserves the mute and motion-hold state. The reaction policy also survives, and a

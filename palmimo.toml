@@ -7,6 +7,7 @@ command = [
   "--voice",
   "{voice}",
   "{no_idle}",
+  "{no_web_search}",
 ]
 devices = ["camera", "audio", "motor_display"]
 
@@ -21,6 +22,12 @@ type = "bool"
 default = false
 flag = "--no-idle"
 description = "Disable autonomous idle gestures, for example while comparing audio."
+
+[params.no_web_search]
+type = "bool"
+default = false
+flag = "--no-web-search"
+description = "Disable web lookups for current information."
 
 [env.OPENAI_API_KEY]
 required = true

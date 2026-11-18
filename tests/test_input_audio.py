@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from audio_fakes import FakeMic
+from audio_fakes import FakeMic, acknowledge_startup
 from test_recovery import RecordingLog, TestRobot
 from websockets.asyncio.server import ServerConnection, serve
 
@@ -141,6 +141,7 @@ async def test_audio_stalls_recover_without_replaying_motion_or_losing_quiet(
         configs.append(start["session"])
         index = len(configs)
         await ws.send(json.dumps({"type": "session.started", "session": {"id": f"live_{index}"}}))
+        await acknowledge_startup(ws)
         if index == 1:
             await ws.send(json.dumps({"type": "session.input_transcript.delta", "delta": "Keep speaking English."}))
         async for raw in ws:

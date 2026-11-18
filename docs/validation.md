@@ -92,7 +92,17 @@ API call or a simulated test.
    cancels music, settles the worker, and restores voice. Synthetic tests cover
    this handoff, output suppression, cancellation and buffer reset; they do not
    establish recognition latency, echo rejection, or audible continuity.
-13. End with `q`, wait for `stopped`, and independently verify device release,
+13. Run `check-search` with a public weather question and a company question;
+    inspect source links, forecast date/place, and retrieval time. During a
+    supervised session, repeat in Japanese and English. Ask a follow-up, correct
+    the date/location while searching, then cancel a lookup before it completes.
+    Confirm only the current result is spoken and unrelated group conversation
+    does not initiate searches. During a delayed lookup, verify speech, local
+    stop, quiet listening, and song interruption still work. In software tests,
+    inject timeout/HTTP failures, missing sources, reordered decisions, and
+    reconnection; require no stale answer, automatic replay, or stopped audio.
+    Inspect `w` output and distinguish submitted context from audible answers.
+14. End with `q`, wait for `stopped`, and independently verify device release,
    21 responding servos, no hardware errors, and torque off.
 
 Record the app commit, SDK and helper versions, hardware/audio setup, API models,
