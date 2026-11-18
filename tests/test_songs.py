@@ -78,15 +78,36 @@ def test_songbook_rejects_duplicate_ids(tmp_path: Path) -> None:
         load_songbook(path)
 
 
+@pytest.mark.parametrize("env_name", ["OPENAI_LIVE_SONGBOOK", "PALMIMO_SONGBOOK"])
 def test_songbook_cli_validates_without_credentials_or_devices(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    env_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = write_songbook(tmp_path)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("PALMIMO_SONGBOOK", str(path))
+    monkeypatch.delenv("OPENAI_LIVE_SONGBOOK", raising=False)
+    monkeypatch.delenv("PALMIMO_SONGBOOK", raising=False)
+    monkeypatch.setenv(env_name, str(path))
     monkeypatch.setattr("sys.argv", ["palmimo-openai-live-decisions", "check-songs"])
     cli.main()
     assert json.loads(capsys.readouterr().out)[0]["seconds"] == 0.1
+
+
+@pytest.mark.parametrize("selected", ["argument", "portal", "legacy"])
+def test_songbook_cli_selection_precedence(
+    selected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_songbook(tmp_path)
+    missing = str(tmp_path / "missing.json")
+    monkeypatch.setenv("OPENAI_LIVE_SONGBOOK", str(path) if selected == "portal" else missing)
+    monkeypatch.setenv("PALMIMO_SONGBOOK", str(path) if selected == "legacy" else missing)
+    argv = ["palmimo-openai-live-decisions", "check-songs"]
+    if selected == "argument":
+        argv.extend(["--songbook", str(path)])
+    elif selected == "legacy":
+        monkeypatch.setenv("OPENAI_LIVE_SONGBOOK", "")
+    monkeypatch.setattr("sys.argv", argv)
+    cli.main()
+    assert json.loads(capsys.readouterr().out)[0]["id"] == "hello"
 
 
 def test_output_interrupt_reaps_old_process_and_accepts_fresh_audio(monkeypatch: pytest.MonkeyPatch) -> None:
