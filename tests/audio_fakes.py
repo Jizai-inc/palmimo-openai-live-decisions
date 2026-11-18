@@ -1,11 +1,19 @@
 """Synthetic SDK-shaped capture for transport tests without audio devices."""
 
+import json
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
+
+
+async def acknowledge_startup(ws: Any) -> None:
+    """Mirror the Live boundary after authenticated device initialization."""
+    event = json.loads(await ws.recv())
+    assert event["type"] == "session.update" and event["event_id"].startswith("startup_")
+    await ws.send(json.dumps({"type": "session.updated", "client_event_id": event["event_id"]}))
 
 
 class FakeMic:

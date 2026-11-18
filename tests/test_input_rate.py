@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from audio_fakes import FakeMic
+from audio_fakes import FakeMic, acknowledge_startup
 from test_recovery import RecordingLog, TestRobot
 from websockets.asyncio.server import ServerConnection, serve
 
@@ -108,6 +108,7 @@ async def test_input_rate_errors_preserve_voice_and_only_reconnect_when_needed(
         configurations.append(configuration)
         index = len(configurations)
         await ws.send(json.dumps({"type": "session.started", "session": {"id": f"live_{index}"}}))
+        await acknowledge_startup(ws)
         sent_error = False
         paused_at = 0.0
         async for raw in ws:

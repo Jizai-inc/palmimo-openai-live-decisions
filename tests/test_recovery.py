@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from audio_fakes import FakeMic
+from audio_fakes import FakeMic, acknowledge_startup
 from websockets.asyncio.server import ServerConnection, serve
 
 from palmimo_openai_live_decisions import recovery, runtime
@@ -162,6 +162,7 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
             assert item["content"][0]["type"] == expected_type
         index = len(configs)
         await ws.send(json.dumps({"type": "session.started", "session": {"id": f"live_{index}"}}))
+        await acknowledge_startup(ws)
         await ws.send(
             json.dumps(
                 {

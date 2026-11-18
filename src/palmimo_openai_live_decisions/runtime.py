@@ -25,6 +25,7 @@ from .input_rate import INPUT_RATE_ERROR, AudioSendRate
 from .policy import QUIET_RESTORED, Conversation, Reaction, ReactionPolicy
 from .recovery import DecisionRecovery, ProtocolError, RetryableSessionError, bounded, session_closed_error
 from .robot import FACES, Robot
+from .search import SearchSession, WebSearch
 from .songs import Song, SongIntroduction, play_song
 from .vision import SceneVision
 
@@ -50,6 +51,7 @@ class Session:
         vision: SceneVision | None = None,
         idle: IdleDecider | None = None,
         policy: ReactionPolicy | None = None,
+        search: WebSearch | None = None,
     ) -> None:
         self.settings = settings
         self.robot = robot
@@ -91,6 +93,17 @@ class Session:
         self.song_introduction: SongIntroduction | None = None
         self.output_drain: asyncio.Task[None] | None = None
         self.send: Callable[[dict[str, Any]], Awaitable[None]]
+        self.search = (
+            SearchSession(
+                search,
+                log,
+                lambda event: self.send(event),
+                lambda: not (self.policy.quiet or self.control.muted or self.input_recovering or self.singing),
+                settings.confidence,
+            )
+            if search is not None and settings.search_enabled
+            else None
+        )
 
     def schedule(self, work: Callable[[], Coroutine[Any, Any, None]], *, origin: str = "reaction") -> bool:
         """Let reactions interrupt idle movement; drop other competing gestures."""
@@ -146,6 +159,8 @@ class Session:
 
     def stop_motion(self, reason: str) -> None:
         """Settle before confirming a local or transcript-triggered stop."""
+        if self.search is not None:
+            self.search.cancel(reason, block=True)
         was_singing = self.singing
         self.control.motion_paused = True
         self.last_action_input = self.input_events
@@ -362,6 +377,8 @@ class Session:
 
     async def settle(self) -> None:
         """Wait for SDK cancellation to finish before disconnecting hardware."""
+        if self.search is not None:
+            await self.search.close()
         self.invalidate_idle()
         if self.idle_request is not None:
             await asyncio.gather(self.idle_request, return_exceptions=True)
@@ -468,6 +485,8 @@ class Session:
                 self.quiet_reply_request = None
             if role == "user":
                 self.input_events += 1
+                if self.search is not None:
+                    self.search.observe_input(event)
                 self.input_tail = (self.input_tail + event.get("delta", ""))[-32:]
                 if (self.singing or not self.control.motion_paused) and any(
                     word in self.input_tail.lower()
@@ -482,6 +501,9 @@ class Session:
                 start_ms=event.get("start_ms"),
                 end_ms=event.get("end_ms"),
             )
+        elif kind == "session.delegation.created":
+            if self.search is not None:
+                self.search.remember_delegation(event, self.conversation.history())
         elif kind == "decision.event":
             self.decision_events += 1
             if not self.recovery.observe_decision(event):
@@ -507,6 +529,8 @@ class Session:
             else:
                 if self.singing:
                     return
+                if self.search is not None:
+                    self.search.observe_decision(event)
                 was_quiet = self.policy.quiet
                 reaction = self.policy.evaluate(event)
                 if reaction is None:
@@ -514,6 +538,8 @@ class Session:
                     return
                 if self.policy.quiet != was_quiet:
                     self.log.write("quiet_entered" if self.policy.quiet else "quiet_released", reason="decision")
+                    if self.policy.quiet and self.search is not None:
+                        self.search.cancel("quiet_listening", block=True)
                 if reaction.expression or reaction.gesture or reaction.instruction:
                     self.log.write(
                         "reaction",
@@ -540,7 +566,7 @@ class Session:
                                         "Answer their latest conversational question briefly now, in their language, "
                                         "using the preceding conversation when relevant. If already answering or answered, "
                                         "do not repeat it. Do not announce the listening-state change. "
-                                        "For a motion or scene request, follow the delegation policy and wait for its "
+                                        "For a motion, scene, song, or search request, follow the delegation policy and wait for its "
                                         "backend notice; this is not confirmation that any action ran. "
                                         "Honor any newer quiet request and yield while the person continues speaking."
                                     ),
@@ -647,6 +673,16 @@ class Session:
             if action == "stop":
                 self.stop_motion("delegated_song_stop")
             return
+        if action in {"search", "cancel_search"}:
+            if self.search is not None:
+                if action == "cancel_search":
+                    self.search.cancel_delegation(delegation)
+                elif not (self.control.muted or self.input_recovering) and self.search.accepts(delegation):
+                    await self.lift_quiet(self.policy.release(), "search_request")
+                    self.search.start(delegation, self.conversation.history())
+            return
+        if self.search is not None and action in {*ACTIONS, *songs, "stop", "observe", "resume_idle"}:
+            self.search.cancel("new_task", block=True)
         if self.input_recovering and action in {*ACTIONS, *songs, "resume_idle"} and action != "stop":
             self.last_action_input = self.input_events
             self.log.write("action_discarded", reason="audio_recovering", action=action)
@@ -839,6 +875,29 @@ async def close_connection(ws: Any, session: Session, player: Any) -> None:
                     await session.dispatch(event, NullPlayback())
     except (TimeoutError, websockets.ConnectionClosed):
         session.log.write("usage_unconfirmed")
+
+
+async def drain_startup_output(ws: Any, log: EventLog, timeout: float = 10) -> None:
+    """Discard pre-microphone output up to a server-acknowledged startup boundary."""
+    identity = f"startup_{uuid.uuid4().hex}"
+    packets = 0
+    audio_bytes = 0
+    async with asyncio.timeout(timeout):
+        await ws.send(json.dumps({"type": "session.update", "event_id": identity, "session": {}}))
+        while True:
+            event = json.loads(await ws.recv())
+            kind = event.get("type")
+            if kind == "session.updated" and event.get("client_event_id") == identity:
+                log.write("startup_output_drained", packets=packets, audio_seconds=round(audio_bytes / 32000, 3))
+                return
+            if kind == "session.output_audio.delta":
+                audio_bytes += len(base64.b64decode(event["delta"], validate=True))
+                packets += 1
+            elif kind == "session.closed":
+                session_closed_error(bounded(event.get("reason")))
+                raise ProtocolError("Live closed during device startup")
+            elif kind == "error":
+                raise ProtocolError(f"Live rejected device startup: {bounded(event.get('error', {}).get('code'))}")
 
 
 async def run_connection(
@@ -1037,7 +1096,16 @@ async def run_connection(
                     walking=session.robot.walking,
                     motion_paused=session.control.motion_paused,
                     quiet=session.policy.quiet,
+                    searching=session.search is not None
+                    and session.search.task is not None
+                    and not session.search.task.done(),
                 )
+            elif command == "w" and session.search is not None:
+                result = session.search.backend.last_result
+                if result is not None:
+                    print(result.markdown(), flush=True)
+                else:
+                    session.log.write("search_sources_unavailable")
             elif command == "i":
                 if session.input_recovering:
                     continue
@@ -1100,11 +1168,14 @@ async def run(
     frames = getattr(robot, "camera_frames", None)
     vision = SceneVision(frames, key) if frames is not None else None
     idle = IdleDecider(key) if settings.idle_enabled and not settings.audio_only else None
+    search = (
+        WebSearch(key, settings.search_model, timezone=settings.search_timezone) if settings.search_enabled else None
+    )
     try:
         while not stop.is_set() and time.monotonic() < deadline:
             player: Playback | None = None
             policy.reconnect()
-            session = Session(settings, robot, log, conversation, control, vision, idle, policy)
+            session = Session(settings, robot, log, conversation, control, vision, idle, policy, search)
             started = time.monotonic()
             try:
                 async with websockets.connect(
@@ -1138,6 +1209,7 @@ async def run(
                         player = Playback(settings.speaker_device)
                     except OSError as exc:
                         raise RuntimeError("Device startup failed") from exc
+                    await drain_startup_output(ws, log)
                     log.write(
                         "ready",
                         session_id=session.recovery.session_id,
@@ -1220,9 +1292,13 @@ async def run(
                     log.write("audio_final", **player.stats())
                     await asyncio.to_thread(player.close)
     finally:
-        log.write("parking")
         try:
-            await robot.cancel()
+            if search is not None:
+                await search.close()
         finally:
-            await robot.close()
+            log.write("parking")
+            try:
+                await robot.cancel()
+            finally:
+                await robot.close()
         log.write("stopped")

@@ -87,6 +87,7 @@ async def test_reconnect_keeps_history_and_mute_without_reopening_robot(monkeypa
     monkeypatch.setattr(runtime.websockets, "connect", connect)
     monkeypatch.setattr(runtime, "start_connection", start)
     monkeypatch.setattr(runtime, "close_connection", close)
+    monkeypatch.setattr(runtime, "drain_startup_output", close)
     monkeypatch.setattr(runtime, "run_connection", connection)
     monkeypatch.setattr(runtime, "Playback", FakePlayer)
     monkeypatch.setattr(runtime.asyncio, "wait_for", backoff)
