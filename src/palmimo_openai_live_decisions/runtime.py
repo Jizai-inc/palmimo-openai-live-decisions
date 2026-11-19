@@ -16,8 +16,8 @@ from typing import Any
 import websockets
 
 from .actions import ACTION_DESCRIPTIONS, ACTIONS, CONTINUOUS_ACTIONS
-from .audio import NullPlayback, Playback
-from .config import LIVE_URL, Settings, session_config
+from .audio import NullPlayback, Playback, PlaybackBacklog
+from .config import LIVE_URL, RATE, Settings, session_config
 from .events import EventLog
 from .idle import IDLE_ACTIONS, IDLE_PAUSE_SECONDS, IdleDecider
 from .input_audio import AudioInput, CaptureRecovery, CaptureStalled, SendStalled
@@ -36,6 +36,18 @@ class InputControl:
 
     muted: bool = False
     motion_paused: bool = False
+
+
+@dataclass
+class PlaybackRecovery:
+    """A local speaker reset and its matching boundary in the ordered Live stream."""
+
+    marker: str
+    started: float
+    reset: asyncio.Task[None]
+    ready: asyncio.Event
+    discarded_bytes: int
+    acknowledged: bool = False
 
 
 class Session:
@@ -88,6 +100,8 @@ class Session:
         self.input_stats: Callable[[], dict[str, Any]] = self.audio_rate.stats
         self.health_probe: tuple[str, float] | None = None
         self.player: Any = NullPlayback()
+        self.playback_recovery: PlaybackRecovery | None = None
+        self.last_playback_reset: float | None = None
         self.singing = False
         self.song_output = False
         self.song_introduction: SongIntroduction | None = None
@@ -242,6 +256,64 @@ class Session:
         if self.robot.walking and now - self.last_server_event > self.settings.stream_stall_seconds:
             raise ConnectionError("Live event stream stalled while walking")
 
+    async def recover_playback(self, reason: str, discarded_bytes: int = 0) -> None:
+        """Flush the old pipe off the event loop and keep consuming Live events."""
+        now = time.monotonic()
+        recent = (
+            self.last_playback_reset is not None
+            and now - self.last_playback_reset < self.settings.audio_recovery_seconds
+        )
+        # An interrupted action introduction cannot authorize movement. Let normal
+        # session cleanup settle its owner (including the song's own speaker reset).
+        replace = self.singing or self.action_speech is not None or recent
+        self.log.write(
+            "playback_stalled",
+            reason=reason,
+            recovery="reconnect" if replace else "reset_speaker",
+            session_id=self.recovery.session_id,
+            incoming_bytes=discarded_bytes,
+            **self.player.stats(),
+        )
+        if replace:
+            raise RetryableSessionError("Playback stalled again or during an action announcement")
+        self.last_playback_reset = now
+        recovery = PlaybackRecovery(
+            f"playback_{uuid.uuid4().hex}",
+            now,
+            asyncio.create_task(asyncio.to_thread(self.player.interrupt)),
+            asyncio.Event(),
+            discarded_bytes,
+        )
+        self.playback_recovery = recovery
+        await self.send({"type": "session.update", "event_id": recovery.marker, "session": {}})
+
+    def check_playback_recovery(self) -> None:
+        """Resume only after the old speaker is reaped and pre-marker audio has passed."""
+        recovery = self.playback_recovery
+        if recovery is None:
+            return
+        elapsed = time.monotonic() - recovery.started
+        if recovery.reset.done():
+            recovery.reset.result()
+            if recovery.acknowledged:
+                self.playback_recovery = None
+                recovery.ready.set()
+                self.log.write(
+                    "playback_resumed",
+                    session_id=self.recovery.session_id,
+                    elapsed_ms=round(elapsed * 1000),
+                    discarded_stream_ms=round(recovery.discarded_bytes / (RATE * 2) * 1000),
+                )
+                return
+        if elapsed > self.settings.audio_recovery_seconds:
+            self.log.write(
+                "playback_recovery_timeout",
+                session_id=self.recovery.session_id,
+                speaker_ready=recovery.reset.done(),
+                boundary_acknowledged=recovery.acknowledged,
+            )
+            raise RetryableSessionError("Playback did not resynchronize within the grace period")
+
     async def hold_for_input(self, stage: str) -> None:
         """Hold motion locally without depending on a potentially blocked send."""
         self.input_recovering = True
@@ -256,6 +328,8 @@ class Session:
 
     async def announce_action(self, action: str, delegation: str, description: str | None = None) -> bool:
         """Wait for voice onset and the playback margin before starting a requested action."""
+        if self.playback_recovery is not None:
+            await self.playback_recovery.ready.wait()
         speech = asyncio.Event()
         self.action_speech = speech
         try:
@@ -290,6 +364,8 @@ class Session:
 
     async def sing(self, song: Song, delegation: str) -> None:
         """Own the shared output until the song is drained or explicitly interrupted."""
+        if self.playback_recovery is not None:
+            await self.playback_recovery.ready.wait()
         self.singing = True
         self.input_tail = ""
         result = "cancelled"
@@ -458,9 +534,17 @@ class Session:
         if kind == "session.output_audio.delta":
             if not self.song_output:
                 pcm = base64.b64decode(event["delta"], validate=True)
+                self.check_playback_recovery()
+                if self.playback_recovery is not None:
+                    self.playback_recovery.discarded_bytes += len(pcm)
+                    return
+                try:
+                    player.submit(pcm)
+                except PlaybackBacklog as exc:
+                    await self.recover_playback(exc.reason, len(pcm))
+                    return
                 if self.song_introduction is not None:
                     self.song_introduction.observe_audio(pcm)
-                player.submit(pcm)
         elif kind in {"session.input_transcript.delta", "session.output_transcript.delta"}:
             self.transcript_events += 1
             self.policy.observe(event)
@@ -643,6 +727,9 @@ class Session:
                 self.log.write("session_probe_started", session_id=self.recovery.session_id, event_id=identity)
                 await self.send({"type": "session.update", "event_id": identity, "session": {}})
         elif kind == "session.updated":
+            if self.playback_recovery is not None and event.get("client_event_id") == self.playback_recovery.marker:
+                self.playback_recovery.acknowledged = True
+                self.check_playback_recovery()
             if self.health_probe is not None and event.get("client_event_id") == self.health_probe[0]:
                 self.log.write(
                     "session_probe_succeeded",
@@ -1038,7 +1125,12 @@ async def run_connection(
             session.check_motion()
             session.check_streams()
             session.check_wave()
-            player.check()
+            session.check_playback_recovery()
+            if session.playback_recovery is None:
+                try:
+                    player.check()
+                except PlaybackBacklog as exc:
+                    await session.recover_playback(exc.reason)
             if time.monotonic() - last_audio_log >= 5:
                 session.log.write("audio", **player.stats())
                 session.log.write("input_audio", **input_stats())
@@ -1148,7 +1240,13 @@ async def run_connection(
             await asyncio.to_thread(capture.close)
         finally:
             try:
-                await session.settle()
+                try:
+                    await session.settle()
+                finally:
+                    if session.playback_recovery is not None:
+                        # Cancelling a to_thread task cannot stop its worker. Join it
+                        # before run() closes the speaker or opens a new connection.
+                        await session.playback_recovery.reset
             except OSError as exc:
                 raise RuntimeError("Device cleanup failed") from exc
 

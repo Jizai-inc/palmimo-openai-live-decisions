@@ -124,7 +124,7 @@ class TestRobot:
         return False
 
 
-@pytest.mark.parametrize("mode", ["single", "burst", "closed", "fatal"])
+@pytest.mark.parametrize("mode", ["single", "burst", "closed", "fatal", "playback_no_ack"])
 async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     robot = TestRobot()
     log = RecordingLog()
@@ -141,8 +141,13 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
             players.append(self)
 
         def submit(self, audio: bytes) -> None:
+            if mode == "playback_no_ack" and len(players) == 1:
+                raise runtime.PlaybackBacklog("synthetic backlog")
             self.received.extend(audio)
             heard.set()
+
+        def interrupt(self) -> None:
+            pass
 
         def check(self) -> None:
             pass
@@ -179,10 +184,13 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
                 )
                 await ws.wait_closed()
                 return
-            for i in range(3 if mode == "burst" else 1):
-                await ws.send(
-                    json.dumps(failure(f"trg_{i}", "invalid_api_key" if mode == "fatal" else "decision_failed"))
-                )
+            if mode == "playback_no_ack":
+                await ws.send(json.dumps({"type": "session.output_audio.delta", "delta": "AAA="}))
+            else:
+                for i in range(3 if mode == "burst" else 1):
+                    await ws.send(
+                        json.dumps(failure(f"trg_{i}", "invalid_api_key" if mode == "fatal" else "decision_failed"))
+                    )
         continuing = index > 1 or mode == "single"
         if continuing:
             await ws.send(json.dumps({"type": "session.output_audio.delta", "delta": base64.b64encode(pcm).decode()}))
@@ -198,6 +206,8 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
         async for raw in ws:
             command = json.loads(raw)
             if command["type"] == "session.update":
+                if mode == "playback_no_ack":
+                    continue
                 await ws.send(json.dumps({"type": "session.updated", "client_event_id": command["event_id"]}))
                 if mode == "single":
                     async with asyncio.timeout(2):
@@ -214,19 +224,20 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
     async with serve(server, "127.0.0.1", 0) as listener:
         port = listener.sockets[0].getsockname()[1]
         monkeypatch.setattr(runtime, "LIVE_URL", f"ws://127.0.0.1:{port}")
-        task = runtime.run(Settings(idle_enabled=False), "test", robot, log, stop, asyncio.Queue())  # type: ignore[arg-type]
+        settings = Settings(idle_enabled=False, audio_recovery_seconds=0.35 if mode == "playback_no_ack" else 6)
+        task = runtime.run(settings, "test", robot, log, stop, asyncio.Queue())  # type: ignore[arg-type]
         async with asyncio.timeout(8):
             if mode == "fatal":
                 with pytest.raises(ProtocolError, match="invalid_api_key"):
                     await task
             else:
                 await task
-    assert len(configs) == (2 if mode in {"burst", "closed"} else 1)
+    assert len(configs) == (2 if mode in {"burst", "closed", "playback_no_ack"} else 1)
     assert robot.connects == 1 and robot.closes == 1
     assert all(p.closed for p in players)
     if mode != "fatal":
         assert bytes(players[-1].received) == pcm
-    if mode in {"burst", "closed"}:
+    if mode in {"burst", "closed", "playback_no_ack"}:
         assert robot.stops == 1
         assert any("Please keep speaking English" in p["content"][0]["text"] for p in configs[1]["input"])
         assert any(e["kind"] == "reconnected" and e["motion_paused"] for e in log.events)
@@ -234,6 +245,9 @@ async def test_voice_pipeline_recovers_over_real_websocket(monkeypatch: pytest.M
         assert robot.stops == 0
         assert any(e["kind"] == "decision_recovered" for e in log.events)
         assert not any(e["kind"] == "reconnected" for e in log.events)
+    if mode == "playback_no_ack":
+        timeout = next(e for e in log.events if e["kind"] == "playback_recovery_timeout")
+        assert timeout["speaker_ready"] and not timeout["boundary_acknowledged"]
 
 
 async def test_repeated_connection_failures_cool_down_and_stop_promptly(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,13 +1,28 @@
 """Continuous PCM playback with bounded buffering and observable failures."""
 
+import contextlib
 import queue
+import struct
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import RATE
+
+if sys.platform == "linux" or TYPE_CHECKING:
+    import fcntl
+    import termios
+
+
+class PlaybackBacklog(RuntimeError):
+    """The speaker has fallen behind; queued Live audio is no longer timely."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Playback backlog exceeded the latency limit ({reason})")
+        self.reason = reason
 
 
 class Playback:
@@ -58,12 +73,33 @@ class Playback:
         self.packets = 0
         self.audio_bytes = 0
         self.last_packet: float | None = None
+        self.write_started: float | None = None
+        self.writing_bytes = 0
+        self.written_packets = 0
         self.max_gap_ms = 0.0
         self.max_pending = 0
         self.thread = threading.Thread(target=self._write, name="live-playback", daemon=True)
         self.monitor = threading.Thread(target=self._monitor, name="live-audio-diagnostics", daemon=True)
         self.thread.start()
         self.monitor.start()
+
+    def _pipe_bytes(self) -> int | None:
+        """Linux exposes unread bytes on the write end of aplay's stdin pipe."""
+        if sys.platform != "linux" or self.process.stdin is None:
+            return None
+        try:
+            return int(struct.unpack("i", fcntl.ioctl(self.process.stdin, termios.FIONREAD, bytes(4)))[0])
+        except (OSError, ValueError, TypeError):
+            # In-memory sinks and the closing pipe do not expose this counter.
+            return None
+
+    def _check_backlog(self, incoming: int = 0) -> None:
+        """Called under the writer lock; in-flight bytes can already be inside the pipe."""
+        if self.pending + incoming > self.limit:
+            raise PlaybackBacklog("queue_limit")
+        pipe = self._pipe_bytes()
+        if pipe is not None and self.pending - self.writing_bytes + pipe + incoming > self.limit:
+            raise PlaybackBacklog("speaker_pipe")
 
     def submit(self, pcm: bytes) -> None:
         """Fail fast instead of replaying old audio seconds after an interruption."""
@@ -74,8 +110,7 @@ class Playback:
                 raise RuntimeError("Playback is closed")
             if self.error:
                 raise RuntimeError("Playback failed") from self.error
-            if self.pending + len(pcm) > self.limit:
-                raise RuntimeError("Playback backlog exceeded the latency limit")
+            self._check_backlog(len(pcm))
             self.pending += len(pcm)
             now = time.monotonic()
             if self.last_packet is not None:
@@ -99,11 +134,19 @@ class Playback:
     def stats(self) -> dict[str, Any]:
         """Expose timing counters without recording microphone or generated audio."""
         with self.lock:
+            now = time.monotonic()
+            pipe = self._pipe_bytes()
             return {
                 "packets": self.packets,
+                "written_packets": self.written_packets,
                 "audio_seconds": round(self.audio_bytes / (RATE * 2), 3),
                 "max_gap_ms": round(self.max_gap_ms, 1),
+                "last_packet_age_ms": round((now - self.last_packet) * 1000, 1)
+                if self.last_packet is not None
+                else None,
+                "write_age_ms": round((now - self.write_started) * 1000, 1) if self.write_started is not None else None,
                 "pending_ms": round(self.pending / (RATE * 2) * 1000, 1),
+                "pipe_pending_ms": round(pipe / (RATE * 2) * 1000, 1) if pipe is not None else None,
                 "max_pending_ms": round(self.max_pending / (RATE * 2) * 1000, 1),
                 "underruns": self.underruns,
                 "diagnostics": list(self.diagnostics),
@@ -113,12 +156,18 @@ class Playback:
         """Own the pipe until shutdown; report failures to the supervisor."""
         try:
             while (pcm := self.queue.get()) is not None:
-                if self.closed:
-                    return
+                with self.lock:
+                    if self.closed:
+                        return
+                    self.write_started = time.monotonic()
+                    self.writing_bytes = len(pcm)
                 assert self.process.stdin is not None
                 self.process.stdin.write(pcm)
                 self.process.stdin.flush()
                 with self.lock:
+                    self.write_started = None
+                    self.writing_bytes = 0
+                    self.written_packets += 1
                     self.pending -= len(pcm)
             if not self.closed and self.process.stdin:
                 self.process.stdin.close()
@@ -132,6 +181,10 @@ class Playback:
             return
         if self.error or self.process.poll() is not None:
             raise RuntimeError("Speaker process stopped unexpectedly")
+        with self.lock:
+            if self.write_started is not None and time.monotonic() - self.write_started > self.max_seconds:
+                raise PlaybackBacklog("speaker_write")
+            self._check_backlog()
 
     def close(self) -> None:
         """Discard queued speech and reap this application's audio process."""
@@ -148,12 +201,15 @@ class Playback:
             self.process.wait(timeout=3)
         self.thread.join(timeout=3)
         self.monitor.join(timeout=3)
-        if self.process.stdin:
-            self.process.stdin.close()
-        if self.process.stderr:
-            self.process.stderr.close()
         if self.thread.is_alive() or self.monitor.is_alive():
             raise RuntimeError("Audio worker did not stop")
+        if self.process.stdin:
+            # A blocked BufferedWriter can still have bytes to flush after we
+            # deliberately terminated its reader. That pipe is being discarded.
+            with contextlib.suppress(BrokenPipeError):
+                self.process.stdin.close()
+        if self.process.stderr:
+            self.process.stderr.close()
 
     def interrupt(self) -> None:
         """Drop queued and ALSA-buffered audio before handing the speaker back."""
