@@ -85,6 +85,18 @@ ALSA playback runs off the event loop with a 500 ms buffer and 400 ms startup
 threshold. Bounded queueing prevents stale audio accumulating indefinitely;
 packet-gap, backlog, and underrun counters expose failures without saving audio.
 
+During conversation, exceeding 1.5 seconds of buffered PCM or blocking a single
+speaker write for that long starts a local speaker reset. On Linux the limit
+includes unread bytes in the pipe to `aplay`: a completed write can still be
+several seconds away from playback on devices with large pipes. The receiver keeps
+processing microphone transcripts and stop requests. It discards output PCM
+until the old speaker is closed, the new speaker is open, and Live acknowledges
+the matching empty `session.update`. `playback_stalled` records the application
+and pipe queue depths, time since the last packet, and age of the in-flight write. `playback_resumed`
+records the time to resume and how much incoming audio was skipped. A repeat
+within six seconds, a missing recovery boundary, or a stall during an action
+announcement uses the existing connection recovery and motion hold.
+
 The Live session is accepted before opening hardware. After device initialization,
 the app sends an empty `session.update` and drains pre-microphone output until its
 matching acknowledgment. Only then does normal capture/playback start. This avoids

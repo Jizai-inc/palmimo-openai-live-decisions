@@ -53,6 +53,10 @@ API call or a simulated test.
    send rates, rejected audio, reconnections and actual audible recovery. Include
    quiet listening followed by a direct question. Keep the ordinary stop control
    available and watch hardware health; a timer-induced stop is not a failure.
+   For speaker recovery, first verify a spoken reply, then briefly stall only
+   the test app's speaker output. Check for `playback_stalled` followed by
+   `playback_resumed` on the same Live session, continued microphone input, and
+   an audible answer to a new question. Check that buffered words do not replay.
 9. Repeat conversation, action announcements, stop, resume, and scene questions
    in each target language. Switch languages mid-session, explicitly request a
    language, and check that a quoted foreign phrase does not cause a switch.
